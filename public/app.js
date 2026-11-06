@@ -1,4 +1,5 @@
 const app = document.getElementById('app');
+const themeToggle = document.getElementById('theme-toggle');
 const state = {
   catalog: null,
   currentCharacter: null, // char id when on character view
@@ -10,6 +11,20 @@ const state = {
   seed: 0,
   status: '',
 };
+
+function applyTheme(theme, persist = true) {
+  document.documentElement.dataset.theme = theme;
+  if (persist) localStorage.setItem('kisekae3-theme', theme);
+  const isDark = theme === 'dark';
+  themeToggle.textContent = isDark ? '☀️ ライトモード' : '🌙 ダークモード';
+  themeToggle.setAttribute('aria-label', `${isDark ? 'ライト' : 'ダーク'}モードに切り替え`);
+  themeToggle.setAttribute('aria-pressed', String(isDark));
+}
+
+applyTheme(document.documentElement.dataset.theme, false);
+themeToggle.addEventListener('click', () => {
+  applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+});
 
 // ---------------------------------------------------------------------------
 // helpers

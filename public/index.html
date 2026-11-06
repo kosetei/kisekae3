@@ -4,12 +4,19 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>着せ替えアプリ (kisekae3)</title>
+  <script>
+    const savedTheme = localStorage.getItem('kisekae3-theme');
+    document.documentElement.dataset.theme = savedTheme === 'dark' || savedTheme === 'light'
+      ? savedTheme
+      : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  </script>
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
   <header>
     <h1><a href="#/">着せ替えアプリ</a></h1>
     <span class="hint">store/ にキャラ・服の画像を追加すると候補に現れます</span>
+    <button id="theme-toggle" class="theme-toggle" type="button" aria-label="ダークモードに切り替え" aria-pressed="false">🌙 ダークモード</button>
   </header>
   <main id="app"></main>
   <script src="/app.js"></script>
