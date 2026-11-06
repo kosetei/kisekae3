@@ -10,6 +10,7 @@ const state = {
   prompt: '',
   seed: 0,
   status: '',
+  advancedOpen: false,
 };
 
 function applyTheme(theme, persist = true) {
@@ -73,6 +74,7 @@ function versionLabel(version, index) {
 // ---------------------------------------------------------------------------
 
 function renderCharacterList() {
+  app.className = 'home-page';
   const cards = state.catalog.characters.map((c) => `
     <a class="card" href="#/char/${esc(c.id)}">
       ${c.iconUrl ? `<img src="${c.iconUrl}" alt="${esc(c.name)}" loading="lazy" />` : '<div class="noimg">No icon</div>'}
@@ -83,8 +85,10 @@ function renderCharacterList() {
     </a>`).join('');
 
   app.innerHTML = `
-    <section class="upload-section">
-      <h2>キャラ・服を追加</h2>
+    <h2>キャラを選ぶ</h2>
+    ${state.catalog.characters.length ? `<div class="grid">${cards}</div>` : '<p class="empty">store/characters/ に chara1.png のような画像を追加してください。</p>'}
+    <details class="upload-section">
+      <summary>キャラ・服を追加</summary>
       <div class="upload-grid">
         ${['character', 'clothes'].map((type) => `
           <form class="upload-form" data-type="${type}">
@@ -98,12 +102,12 @@ function renderCharacterList() {
             <span class="upload-status" role="status"></span>
           </form>`).join('')}
       </div>
-    </section>
-    <h2>キャラ一覧</h2>
-    ${state.catalog.characters.length ? `<div class="grid">${cards}</div>` : '<p class="empty">store/characters/ に chara1.png のような画像を追加してください。</p>'}
-    <h2>服（clothes）</h2>
-    ${state.catalog.clothes.length ? `<div class="grid small">${state.catalog.clothes.map((d) => `
-      <div class="card small"><img src="${d.url}" alt="${esc(d.name)}" loading="lazy" /><div class="meta"><strong>${esc(d.name)}</strong></div></div>`).join('')}</div>` : '<p class="empty">store/clothes/ に服の画像を追加してください。</p>'}`;
+    </details>
+    <details class="catalog-clothes">
+      <summary>登録済みの服を一覧表示</summary>
+      ${state.catalog.clothes.length ? `<div class="grid small">${state.catalog.clothes.map((d) => `
+        <div class="card small"><img src="${d.url}" alt="${esc(d.name)}" loading="lazy" /><div class="meta"><strong>${esc(d.name)}</strong></div></div>`).join('')}</div>` : '<p class="empty">store/clothes/ に服の画像を追加してください。</p>'}
+    </details>`;
 
   app.querySelectorAll('.upload-form').forEach((form) => {
     const idInput = form.querySelector('[name="id"]');
@@ -119,6 +123,7 @@ function renderCharacterList() {
 }
 
 function renderCharacterView() {
+  app.className = 'character-page';
   const char = findCharacter(state.currentCharacter);
   if (!char) { app.innerHTML = '<p class="error">キャラが見つかりません。</p>'; return; }
 
@@ -130,49 +135,25 @@ function renderCharacterView() {
   const missing = state.catalog.clothes.filter((d) => !generatedVersions(char, d.id).length);
 
   app.innerHTML = `
-    <p><a href="#/">← キャラ一覧</a></p>
-    <h2>${esc(char.name)}</h2>
+    <div class="character-toolbar">
+      <a href="#/">← キャラ一覧</a>
+      <h2>${esc(char.name)}</h2>
+    </div>
 
-    <section class="stage">
-      <div id="stage" class="stage-image ${state.busy ? 'busy' : ''}">
-        ${displaySrc ? `<img src="${displaySrc}" alt="" />` : '<p class="empty">画像がありません</p>'}
-        ${state.busy ? '<div class="spinner">生成中…</div>' : ''}
-      </div>
-      <p class="stage-caption">
-        ${sel ? `選択中: ${esc(sel)} — ${selUrl ? `生成済み (${versions.length}件)` : '未生成（選択すると生成されます）'}` : '基準画像（icon）'}
-      </p>
-      ${versions.length > 1 ? `
-        <label for="generated-version">表示する生成画像</label>
-        <select id="generated-version">
-          ${versions.map((version, index) => `
-            <option value="${esc(version.url)}" ${version.url === selected.url ? 'selected' : ''}>
-              ${esc(versionLabel(version, index))}
-            </option>`).join('')}
-        </select>` : ''}
-      <p>
-        <button id="generate-all" ${missing.length ? '' : 'disabled'}>未生成を一括生成 (${missing.length})</button>
-        <button id="regenerate-selected" ${sel && versions.length ? '' : 'disabled'}>選択中を再生成</button>
-        <span id="status">${esc(state.status)}</span>
-      </p>
-    </section>
+    <div class="character-layout">
+      <section class="stage">
+        <div id="stage" class="stage-image ${state.busy ? 'busy' : ''}">
+          ${displaySrc ? `<img src="${displaySrc}" alt="${esc(char.name)}${sel ? ` — ${esc(sel)}` : ''}" />` : '<p class="empty">画像がありません</p>'}
+          ${state.busy ? '<div class="spinner">生成中…</div>' : ''}
+        </div>
+        <p class="stage-caption">
+          ${sel ? `選択中: ${esc(sel)} — ${selUrl ? `生成済み (${versions.length}件)` : '未生成（選択すると生成されます）'}` : '基準画像（icon）'}
+        </p>
+      </section>
 
-    <section class="seed-settings">
-      <label for="seed">シード</label>
-      <div class="seed-controls">
-        <input id="seed" type="number" min="0" max="9007199254740991" step="1" value="${esc(state.seed)}" />
-        <button id="randomize-seed" type="button">ランダム</button>
-      </div>
-    </section>
-
-    <section class="prompt-settings">
-      <label for="prompt">生成プロンプト</label>
-      <textarea id="prompt" rows="5">${esc(state.prompt)}</textarea>
-      <p class="hint">未生成の服を選ぶと、このプロンプトで生成します。「選択中を再生成」すると、既存画像を残したまま新しい画像を追加します。</p>
-    </section>
-
-    <section class="dresses">
-      <h3>服を選ぶ</h3>
-      <div class="grid small">
+      <section class="dresses">
+        <h3>服を選ぶ</h3>
+        <div class="dress-grid">
         ${state.catalog.clothes.map((d) => {
           const done = generatedVersions(char, d.id).length > 0;
           return `
@@ -184,9 +165,45 @@ function renderCharacterView() {
               </div>
             </button>`;
         }).join('')}
-      </div>
-    </section>`;
+        </div>
+      </section>
+    </div>
 
+    <details class="advanced-settings" ${state.advancedOpen ? 'open' : ''}>
+      <summary>生成設定・その他</summary>
+      <div class="advanced-content">
+        ${versions.length > 1 ? `
+          <label for="generated-version">表示する生成画像</label>
+          <select id="generated-version">
+            ${versions.map((version, index) => `
+              <option value="${esc(version.url)}" ${version.url === selected.url ? 'selected' : ''}>
+                ${esc(versionLabel(version, index))}
+              </option>`).join('')}
+          </select>` : ''}
+        <div class="generation-actions">
+          <button id="generate-all" ${missing.length ? '' : 'disabled'}>未生成を一括生成 (${missing.length})</button>
+          <button id="regenerate-selected" ${sel && versions.length ? '' : 'disabled'}>選択中を再生成</button>
+          <span id="status" role="status">${esc(state.status)}</span>
+        </div>
+        <section class="seed-settings">
+          <label for="seed">シード</label>
+          <div class="seed-controls">
+            <input id="seed" type="number" min="0" max="9007199254740991" step="1" value="${esc(state.seed)}" />
+            <button id="randomize-seed" type="button">ランダム</button>
+          </div>
+        </section>
+        <section class="prompt-settings">
+          <label for="prompt">生成プロンプト</label>
+          <textarea id="prompt" rows="5">${esc(state.prompt)}</textarea>
+          <p class="hint">未生成の服を選ぶと、このプロンプトで生成します。「選択中を再生成」すると、既存画像を残したまま新しい画像を追加します。</p>
+        </section>
+      </div>
+    </details>`;
+
+  const advancedSettings = app.querySelector('.advanced-settings');
+  advancedSettings.addEventListener('toggle', () => {
+    state.advancedOpen = advancedSettings.open;
+  });
   app.querySelectorAll('button.dress').forEach((btn) => {
     btn.addEventListener('click', () => selectDress(btn.dataset.dress));
   });
