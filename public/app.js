@@ -5,6 +5,7 @@ const state = {
   selectedDress: null,    // dress id on character view
   selectedGenerated: {},  // selected generated image URL per dress
   busy: false,
+  uploading: false,
   prompt: '',
   seed: 0,
   status: '',
@@ -67,11 +68,39 @@ function renderCharacterList() {
     </a>`).join('');
 
   app.innerHTML = `
+    <section class="upload-section">
+      <h2>キャラ・服を追加</h2>
+      <div class="upload-grid">
+        ${['character', 'clothes'].map((type) => `
+          <form class="upload-form" data-type="${type}">
+            <h3>${type === 'character' ? 'キャラ画像' : '服画像'}</h3>
+            <label for="${type}-id">ID</label>
+            <input id="${type}-id" name="id" type="text" required pattern="[A-Za-z0-9_-]+" maxlength="80" placeholder="${type === 'character' ? 'chara1' : 'd1'}" />
+            <label for="${type}-image">画像</label>
+            <input id="${type}-image" name="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif" required />
+            <p class="hint">PNG / JPEG / WebP / GIF、8 MB以下</p>
+            <button type="submit">追加</button>
+            <span class="upload-status" role="status"></span>
+          </form>`).join('')}
+      </div>
+    </section>
     <h2>キャラ一覧</h2>
-    ${state.catalog.characters.length ? `<div class="grid">${cards}</div>` : '<p class="empty">store/characters/ にキャラフォルダを追加してください（icon.* を含む）。</p>'}
+    ${state.catalog.characters.length ? `<div class="grid">${cards}</div>` : '<p class="empty">store/characters/ に chara1.png のような画像を追加してください。</p>'}
     <h2>服（clothes）</h2>
     ${state.catalog.clothes.length ? `<div class="grid small">${state.catalog.clothes.map((d) => `
       <div class="card small"><img src="${d.url}" alt="${esc(d.name)}" loading="lazy" /><div class="meta"><strong>${esc(d.name)}</strong></div></div>`).join('')}</div>` : '<p class="empty">store/clothes/ に服の画像を追加してください。</p>'}`;
+
+  app.querySelectorAll('.upload-form').forEach((form) => {
+    const idInput = form.querySelector('[name="id"]');
+    const fileInput = form.querySelector('[name="image"]');
+    idInput.addEventListener('input', () => { idInput.dataset.edited = 'true'; });
+    fileInput.addEventListener('change', () => {
+      if (!idInput.dataset.edited && fileInput.files[0]) {
+        idInput.value = fileInput.files[0].name.replace(/\.[^.]+$/, '');
+      }
+    });
+    form.addEventListener('submit', uploadImage);
+  });
 }
 
 function renderCharacterView() {
@@ -240,6 +269,50 @@ function setStatus(msg) {
   if (el) el.textContent = msg;
 }
 
+function readImageAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('画像を読み込めませんでした'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function uploadImage(event) {
+  event.preventDefault();
+  if (state.uploading) return;
+
+  const form = event.currentTarget;
+  const id = form.elements.id.value.trim();
+  const file = form.elements.image.files[0];
+  const status = form.querySelector('.upload-status');
+  if (!file) return;
+  if (file.size > 8 * 1024 * 1024) {
+    status.textContent = '画像は8 MB以下にしてください';
+    return;
+  }
+
+  const button = form.querySelector('button[type="submit"]');
+  state.uploading = true;
+  button.disabled = true;
+  status.textContent = '追加中…';
+  try {
+    const image = await readImageAsDataUrl(file);
+    await api('/api/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: form.dataset.type, id, image }),
+    });
+    await refreshCatalog();
+    route();
+  } catch (error) {
+    status.textContent = `追加失敗: ${error.message}`;
+  } finally {
+    state.uploading = false;
+    if (button.isConnected) button.disabled = false;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // routing + refresh (files added to store/ show up on next catalog fetch)
 // ---------------------------------------------------------------------------
@@ -261,7 +334,7 @@ window.addEventListener('hashchange', route);
   route();
   // poll the catalog so images added manually to store/ appear without restart
   setInterval(async () => {
-    if (state.busy) return;
+    if (state.busy || state.uploading || document.activeElement?.closest('.upload-form')) return;
     await refreshCatalog();
     route();
   }, 4000);

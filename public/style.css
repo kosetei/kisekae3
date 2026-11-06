@@ -59,6 +59,28 @@ button.card { cursor: pointer; font: inherit; text-align: left; }
 .empty, .error { color: #6b7280; }
 .error { color: #b91c1c; }
 
+.upload-section {
+  margin-bottom: 24px;
+  padding: 14px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+}
+.upload-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.upload-form {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+.upload-form label { font-size: 13px; font-weight: 600; }
+.upload-form input[type="text"], .upload-form input[type="file"] { max-width: 100%; font: inherit; }
+.upload-form input[type="text"] { padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 8px; }
+.upload-form .hint, .upload-status { margin: 0; font-size: 12px; }
+.upload-status { color: #4b5563; }
+
 .stage { margin-bottom: 20px; }
 .prompt-settings {
   margin: 20px 0;

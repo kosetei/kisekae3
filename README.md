@@ -18,16 +18,19 @@ Windowsファイアウォールで許可を求められた場合は、プライ�
 
 ```
 store/
-  characters/<charId>/icon.(png|jpg|jpeg|webp|gif|svg)   ← キャラ（後から追加すれば候補に出る）
+  characters/<charId>.(png|jpg|jpeg|webp|gif|svg)        ← キャラ（後から追加すれば候補に出る）
+  characters/<charId>/icon.(png|jpg|jpeg|webp|gif|svg)   ← 従来のフォルダ形式も利用可能
   clothes/<dressId>.<ext>                                 ← 服（後から追加すれば候補に出る）
   generated/<charId>/<dressId>.<ext>                     ← 既存の生成結果（手動生成済み分もここ）
   generated/<charId>/<dressId>__<日時>-<ID>.<ext>         ← 再生成したバージョン
 ```
 
-- キャラ名/服名はフォルダ名・ファイル名（base name）がそのまま使われます。
+- キャラ名/服名はファイル名（拡張子を除く部分）がそのまま使われます。
 - 既存の `images/` は参考用としてアプリからは読みません（data.js は削除済み）。
 
 ## 動作
+
+キャラ一覧の「キャラ・服を追加」から画像とIDを指定して追加できます。ファイル名からIDを自動入力し、PNG / JPEG / WebP / GIF（8 MB以下）を受け付けます。同じIDは上書きせずエラーになります。
 
 キャラ一覧 → キャラ画面 → 服を選ぶと:
 
@@ -40,6 +43,7 @@ API:
 
 - `GET /api/catalog` — キャラ・服・生成済みマップ
 - `GET /api/config` — ワークフローJSONに設定された既定プロンプト
+- `POST /api/upload {type, id, image}` — キャラまたは服画像を追加（`image` はBase64 data URL）
 - `POST /api/generate {character, dress, prompt, seed, force}` — 既存なら `{status:"existing"}`, なければ生成。`seed` は省略可能な0以上の安全な整数。`force: true` は既存結果を残したまま新しいバージョンを生成
 
 ## ComfyUI
