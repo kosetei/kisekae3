@@ -216,6 +216,18 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   max-height: 78svh;
   object-fit: contain;
 }
+.stage-image img.stage-image-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  opacity: 0;
+  transition: opacity 1s ease;
+}
+.stage-image img.stage-image-overlay.stage-image-visible { opacity: 1; }
 .stage-caption { margin: 6px 8px; }
 .dresses { min-width: 0; }
 .dresses h3 { margin: 0 0 6px; }
@@ -286,4 +298,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .stage-image img { width: auto; max-width: 100%; max-height: 100%; }
   .dresses { max-height: calc(100dvh - 140px); overflow-y: auto; }
   .dress-grid { grid-template-columns: repeat(auto-fill, minmax(82px, 1fr)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-image img.stage-image-overlay { transition-duration: 0.01ms; }
 }

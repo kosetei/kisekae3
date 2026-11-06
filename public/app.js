@@ -5,6 +5,7 @@ const state = {
   currentCharacter: null, // char id when on character view
   selectedDress: null,    // dress id on character view
   selectedGenerated: {},  // selected generated image URL per dress
+  stageImageRequest: 0,
   busy: false,
   uploading: false,
   prompt: '',
@@ -133,6 +134,11 @@ function renderCharacterView() {
   const selUrl = selected?.url || null;
   const displaySrc = selUrl || char.iconUrl;
   const missing = state.catalog.clothes.filter((d) => !generatedVersions(char, d.id).length);
+  const stageImages = document.querySelectorAll('#stage img');
+  const previousSrc = stageImages.length
+    ? stageImages[stageImages.length - 1].getAttribute('src')
+    : null;
+  const stageSrc = previousSrc || displaySrc;
 
   app.innerHTML = `
     <div class="character-toolbar">
@@ -143,7 +149,7 @@ function renderCharacterView() {
     <div class="character-layout">
       <section class="stage">
         <div id="stage" class="stage-image ${state.busy ? 'busy' : ''}">
-          ${displaySrc ? `<img src="${displaySrc}" alt="${esc(char.name)}${sel ? ` — ${esc(sel)}` : ''}" />` : '<p class="empty">画像がありません</p>'}
+          ${stageSrc ? `<img src="${stageSrc}" alt="${esc(char.name)}${sel ? ` — ${esc(sel)}` : ''}" />` : '<p class="empty">画像がありません</p>'}
           ${state.busy ? '<div class="spinner">生成中…</div>' : ''}
         </div>
         <p class="stage-caption">
@@ -200,6 +206,12 @@ function renderCharacterView() {
       </div>
     </details>`;
 
+  if (displaySrc && displaySrc !== stageSrc) {
+    transitionStageImage(displaySrc, `${char.name}${sel ? ` — ${sel}` : ''}`);
+  } else {
+    state.stageImageRequest += 1;
+  }
+
   const advancedSettings = app.querySelector('.advanced-settings');
   advancedSettings.addEventListener('toggle', () => {
     state.advancedOpen = advancedSettings.open;
@@ -237,6 +249,36 @@ function renderCharacterView() {
 // ---------------------------------------------------------------------------
 // actions
 // ---------------------------------------------------------------------------
+
+function transitionStageImage(src, alt) {
+  const request = ++state.stageImageRequest;
+  const preload = new Image();
+  preload.onload = () => {
+    if (request !== state.stageImageRequest) return;
+    const stage = document.getElementById('stage');
+    if (!stage) return;
+
+    const next = document.createElement('img');
+    next.src = src;
+    next.alt = alt;
+    next.className = 'stage-image-overlay';
+    next.addEventListener('transitionend', (event) => {
+      if (event.propertyName !== 'opacity' || request !== state.stageImageRequest) return;
+      stage.querySelectorAll('img:not(.stage-image-overlay)').forEach((image) => image.remove());
+      next.classList.remove('stage-image-overlay');
+    }, { once: true });
+    stage.append(next);
+    requestAnimationFrame(() => {
+      if (request === state.stageImageRequest) next.classList.add('stage-image-visible');
+    });
+  };
+  preload.onerror = () => {
+    if (request === state.stageImageRequest) {
+      setStatus('画像を読み込めませんでした');
+    }
+  };
+  preload.src = src;
+}
 
 async function selectDress(dressId) {
   state.selectedDress = dressId;
