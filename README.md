@@ -5,8 +5,11 @@
 ## 実行
 
 ```
-npm start        # node server.js → http://localhost:3000
+npm start        # サーバーを起動。server.js と依存モジュールの変更時は自動再起動
+#                # → http://localhost:3000
 ```
+
+画面ファイルの変更はサーバー再起動なしで反映されます。ブラウザーを再読み込みしてください。
 
 LAN内の別端末からは、起動時に表示される `kisekae3 network` のURLへ接続してください。
 Windowsファイアウォールで許可を求められた場合は、プライベートネットワークでのアクセスを許可してください。
