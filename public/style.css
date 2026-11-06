@@ -278,7 +278,14 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .stage-image img { max-height: 78svh; }
   .dresses { padding: 0 6px; }
   .dresses h3 { padding: 0 2px; }
-  .dress-grid { grid-template-columns: repeat(auto-fill, minmax(68px, 1fr)); gap: 3px; }
+  .dress-grid {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 2px;
+    overscroll-behavior-x: contain;
+  }
+  .card.dress { flex: 0 0 72px; }
   .advanced-settings { margin: 12px 8px; }
 }
 

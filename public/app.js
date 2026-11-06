@@ -127,6 +127,10 @@ function renderCharacterView() {
   app.className = 'character-page';
   const char = findCharacter(state.currentCharacter);
   if (!char) { app.innerHTML = '<p class="error">キャラが見つかりません。</p>'; return; }
+  const dressScrollLeft = app.dataset.character === char.id
+    ? app.querySelector('.dress-grid')?.scrollLeft || 0
+    : 0;
+  app.dataset.character = char.id;
 
   const sel = state.selectedDress;
   const versions = sel ? generatedVersions(char, sel) : [];
@@ -205,6 +209,8 @@ function renderCharacterView() {
         </section>
       </div>
     </details>`;
+
+  app.querySelector('.dress-grid').scrollLeft = dressScrollLeft;
 
   if (displaySrc && displaySrc !== stageSrc) {
     transitionStageImage(displaySrc, `${char.name}${sel ? ` — ${sel}` : ''}`);
