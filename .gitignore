@@ -1,0 +1,13 @@
+# Image assets are local data and should not be committed.
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+*.bmp
+*.tif
+*.tiff
+*.svg
+*.ico
+*.avif
+*.heic
