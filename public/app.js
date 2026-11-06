@@ -346,7 +346,7 @@ async function uploadImage(event) {
 }
 
 // ---------------------------------------------------------------------------
-// routing + refresh (files added to store/ show up on next catalog fetch)
+// routing
 // ---------------------------------------------------------------------------
 
 function route() {
@@ -364,10 +364,4 @@ window.addEventListener('hashchange', route);
   state.prompt = config.prompt;
   state.seed = config.seed ?? 0;
   route();
-  // poll the catalog so images added manually to store/ appear without restart
-  setInterval(async () => {
-    if (state.busy || state.uploading || document.activeElement?.closest('.upload-form')) return;
-    await refreshCatalog();
-    route();
-  }, 4000);
 })();
