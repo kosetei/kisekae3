@@ -225,6 +225,7 @@ function renderCharacterView() {
 
       <section class="dresses">
         <h3>服を選ぶ</h3>
+        <p class="hint">未生成の選択中の服をもう一度クリック（タップ）すると生成します。</p>
         <div class="dress-grid">
         ${state.catalog.clothes.map((d) => {
           const done = generatedVersions(char, d.id).length > 0;
@@ -432,7 +433,12 @@ function transitionStageImage(src, alt) {
 }
 
 async function selectDress(dressId) {
-  if (dressId !== state.selectedDress && !await confirmPromptSaveBeforeLeaving()) {
+  if (dressId === state.selectedDress) {
+    const char = findCharacter(state.currentCharacter);
+    if (!generatedVersions(char, dressId).length) await generate(char, dressId);
+    return;
+  }
+  if (!await confirmPromptSaveBeforeLeaving()) {
     renderCharacterView();
     return;
   }
