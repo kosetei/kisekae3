@@ -12,6 +12,9 @@ const state = {
   imageManagerOpen: false,
   imageActionBusy: false,
   stageImageRequest: 0,
+  stageCharacter: null,
+  stageDisplayedSrc: null,
+  stageTransitionSrc: null,
   busy: false,
   uploading: false,
   prompt: '',
@@ -425,6 +428,9 @@ function renderCharacterView() {
   app.className = 'character-page';
   const char = findCharacter(state.currentCharacter);
   if (!char) { app.innerHTML = '<p class="error">キャラが見つかりません。</p>'; return; }
+  const existingLayout = state.stageCharacter === char.id
+    ? app.querySelector('.character-layout')
+    : null;
   const dressScrollLeft = app.dataset.character === char.id
     ? app.querySelector('.dress-grid')?.scrollLeft || 0
     : 0;
@@ -436,21 +442,23 @@ function renderCharacterView() {
   const selected = sel ? selectedVersion(char, sel) : null;
   const selUrl = selected?.url || null;
   const displaySrc = selUrl || char.iconUrl;
+  if (state.stageCharacter !== char.id) {
+    state.stageImageRequest += 1;
+    state.stageCharacter = char.id;
+    state.stageDisplayedSrc = char.iconUrl;
+    state.stageTransitionSrc = null;
+  }
   const missing = state.catalog.clothes.filter((d) => !generatedVersions(char, d.id).length);
   const dressFolders = groupedCatalogItems(state.catalog.clothes, state.catalog.groups.clothes);
   const visibleDresses = dressFolders.find(([group]) => group === state.dressFolder)?.[1] || [];
   const generatedTotal = versions.length;
-  const stageImages = document.querySelectorAll('#stage img');
-  const previousSrc = stageImages.length
-    ? stageImages[stageImages.length - 1].getAttribute('src')
-    : null;
-  const stageSrc = previousSrc || displaySrc;
+  const stageSrc = state.stageDisplayedSrc || displaySrc;
   const dressPromptSettings = sel ? promptSettingsForDress(sel) : { source: 'shared' };
   const activePreset = state.promptSettings.presets.find((preset) => (
     dressPromptSettings.source === 'preset' && preset.id === dressPromptSettings.presetId
   ));
 
-  app.innerHTML = `
+  const view = `
     <div class="character-toolbar">
       <a href="#/">← キャラ一覧</a>
       <h2>${esc(char.name)}</h2>
@@ -565,13 +573,51 @@ function renderCharacterView() {
       </div>
     </details>`;
 
+  if (!existingLayout) {
+    app.innerHTML = view;
+  } else {
+    const nextView = document.createElement('div');
+    nextView.innerHTML = view;
+    const nextToolbar = nextView.querySelector('.character-toolbar');
+    const nextLayout = nextView.querySelector('.character-layout');
+    const nextDresses = nextLayout?.querySelector('.dresses');
+    const currentDresses = existingLayout.querySelector('.dresses');
+    if (!nextToolbar || !nextLayout || !nextDresses || !currentDresses) {
+      throw new Error('着せ替え画面を更新できません');
+    }
+
+    app.querySelector('.character-toolbar')?.replaceWith(nextToolbar);
+    currentDresses.replaceWith(nextDresses);
+    for (const child of [...app.children]) {
+      if (child !== nextToolbar && child !== existingLayout) child.remove();
+    }
+    app.insertBefore(nextToolbar, existingLayout);
+    for (const child of [...nextView.children]) {
+      if (child !== nextLayout) app.append(child);
+    }
+  }
+
+  const stage = document.getElementById('stage');
+  stage?.classList.toggle('busy', state.busy);
+  const spinner = stage?.querySelector('.spinner');
+  if (state.busy && stage && !spinner) {
+    const newSpinner = document.createElement('div');
+    newSpinner.className = 'spinner';
+    newSpinner.textContent = '生成中…';
+    stage.append(newSpinner);
+  } else if (!state.busy) {
+    spinner?.remove();
+  }
+
   const dressGrid = app.querySelector('.dress-grid');
   if (dressGrid) dressGrid.scrollLeft = dressScrollLeft;
 
   if (displaySrc && displaySrc !== stageSrc) {
     transitionStageImage(displaySrc, `${char.name}${sel ? ` — ${selectedDressName}` : ''}`);
-  } else {
+  } else if (state.stageTransitionSrc && state.stageTransitionSrc !== displaySrc) {
     state.stageImageRequest += 1;
+    state.stageTransitionSrc = null;
+    document.querySelectorAll('#stage img.stage-image-overlay').forEach((image) => image.remove());
   }
 
   const advancedSettings = app.querySelector('.advanced-settings');
@@ -716,7 +762,10 @@ async function renameCatalogGroup(event) {
 // ---------------------------------------------------------------------------
 
 function transitionStageImage(src, alt) {
+  if (state.stageTransitionSrc === src) return;
   const request = ++state.stageImageRequest;
+  state.stageTransitionSrc = src;
+  document.querySelectorAll('#stage img.stage-image-overlay').forEach((image) => image.remove());
   const preload = new Image();
   preload.onload = () => {
     if (request !== state.stageImageRequest) return;
@@ -727,18 +776,30 @@ function transitionStageImage(src, alt) {
     next.src = src;
     next.alt = alt;
     next.className = 'stage-image-overlay';
-    next.addEventListener('transitionend', (event) => {
-      if (event.propertyName !== 'opacity' || request !== state.stageImageRequest) return;
-      stage.querySelectorAll('img:not(.stage-image-overlay)').forEach((image) => image.remove());
+    const finishTransition = () => {
+      if (request !== state.stageImageRequest || state.stageTransitionSrc !== src) return;
+      stage.querySelectorAll('img').forEach((image) => {
+        if (image !== next) image.remove();
+      });
       next.classList.remove('stage-image-overlay');
+      state.stageDisplayedSrc = src;
+      state.stageTransitionSrc = null;
+    };
+    next.addEventListener('transitionend', (event) => {
+      if (event.propertyName === 'opacity') finishTransition();
     }, { once: true });
     stage.append(next);
     requestAnimationFrame(() => {
-      if (request === state.stageImageRequest) next.classList.add('stage-image-visible');
+      if (request !== state.stageImageRequest) return;
+      requestAnimationFrame(() => {
+        if (request === state.stageImageRequest) next.classList.add('stage-image-visible');
+      });
     });
+    window.setTimeout(finishTransition, 1100);
   };
   preload.onerror = () => {
     if (request === state.stageImageRequest) {
+      state.stageTransitionSrc = null;
       setStatus('画像を読み込めませんでした');
     }
   };
