@@ -32,6 +32,7 @@ const MIME = {
 };
 
 const SAFE_ID = /^[A-Za-z0-9_-]+$/;
+const RESERVED_CATALOG_IDS = new Set(['__proto__', 'constructor', 'prototype']);
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_REQUEST_BYTES = 12 * 1024 * 1024;
 const UPLOAD_TYPES = new Map([
@@ -62,6 +63,16 @@ function extOf(name) {
 
 function isImage(name) {
   return IMAGE_EXTS.has(extOf(name));
+}
+
+function isCatalogItemId(id) {
+  return typeof id === 'string'
+    && id.length > 0
+    && id.length <= 255
+    && id !== '.'
+    && id !== '..'
+    && !RESERVED_CATALOG_IDS.has(id)
+    && !/[\\/\0-\x1f\x7f]/.test(id);
 }
 
 function naturalSort(a, b) {
@@ -207,7 +218,7 @@ function readCatalogMetadata() {
       throw new Error('Invalid catalog metadata');
     }
     for (const [id, item] of Object.entries(items)) {
-      if (!SAFE_ID.test(id) || !item || typeof item !== 'object' || Array.isArray(item)
+      if (!isCatalogItemId(id) || !item || typeof item !== 'object' || Array.isArray(item)
         || typeof item.alias !== 'string' || typeof item.group !== 'string'
         || item.alias.length > 100 || item.group.length > 100) {
         throw new Error('Invalid catalog metadata');
@@ -252,9 +263,10 @@ function scanCatalog() {
     for (const f of fs.readdirSync(clothesDir)) {
       if (!fs.statSync(path.join(clothesDir, f)).isFile() || !isImage(f)) continue;
       const id = path.basename(f, path.extname(f));
+      if (!isCatalogItemId(id)) continue;
       clothes.push({
         id,
-        name: metadata.clothes[id]?.alias || id,
+        name: metadata.clothes[id]?.alias || id.slice(0, 100),
         group: metadata.clothes[id]?.group || '',
         url: `/store/clothes/${encodeURIComponent(f)}`,
       });
@@ -267,7 +279,7 @@ function scanCatalog() {
     const characterIds = new Set();
     for (const entry of fs.readdirSync(charactersDir, { withFileTypes: true })) {
       if (entry.isDirectory()) {
-        characterIds.add(entry.name);
+        if (isCatalogItemId(entry.name)) characterIds.add(entry.name);
       } else if (entry.isFile() && isImage(entry.name)) {
         const id = path.basename(entry.name, path.extname(entry.name));
         if (SAFE_ID.test(id)) characterIds.add(id);
@@ -292,7 +304,7 @@ function scanCatalog() {
 
       characters.push({
         id,
-        name: metadata.characters[id]?.alias || id,
+        name: metadata.characters[id]?.alias || id.slice(0, 100),
         group: metadata.characters[id]?.group || '',
         iconUrl: characterImage?.url ?? null,
         generated,
@@ -623,7 +635,7 @@ function handleCatalogItem(res, body) {
   if (!['character', 'clothes'].includes(type)) {
     return json(res, 400, { error: 'type must be character or clothes' });
   }
-  if (typeof id !== 'string' || !SAFE_ID.test(id)) {
+  if (!isCatalogItemId(id)) {
     return json(res, 400, { error: 'Invalid catalog ID' });
   }
   if (typeof alias !== 'string' || alias.length > 100
@@ -651,11 +663,17 @@ function handleCatalogItems(res, body) {
     return json(res, 400, { error: 'type must be character or clothes' });
   }
   if (!Array.isArray(items) || !items.length || items.length > 500
-    || items.some((item) => !item || typeof item !== 'object' || Array.isArray(item)
-      || typeof item.id !== 'string' || !SAFE_ID.test(item.id)
-      || typeof item.alias !== 'string' || item.alias.length > 100)
-    || new Set(items.map((item) => item.id)).size !== items.length) {
-    return json(res, 400, { error: 'items must contain unique valid IDs and aliases' });
+    || items.some((item) => !item || typeof item !== 'object' || Array.isArray(item))) {
+    return json(res, 400, { error: 'items must be a non-empty array of at most 500 catalog items' });
+  }
+  if (items.some((item) => !isCatalogItemId(item.id))) {
+    return json(res, 400, { error: 'Catalog item IDs must be filenames without path separators and at most 255 characters' });
+  }
+  if (items.some((item) => typeof item.alias !== 'string' || item.alias.length > 100)) {
+    return json(res, 400, { error: 'Each catalog item alias must be a string of 100 characters or fewer' });
+  }
+  if (new Set(items.map((item) => item.id)).size !== items.length) {
+    return json(res, 400, { error: 'Catalog item IDs must be unique' });
   }
   if (typeof group !== 'string' || group.length > 100) {
     return json(res, 400, { error: 'group must be a string of 100 characters or fewer' });
