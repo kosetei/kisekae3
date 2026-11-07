@@ -11,6 +11,7 @@
 *.ico
 *.avif
 *.heic
+*.heif
 
 # Local character, clothing, generated-image, and prompt settings data.
 store/

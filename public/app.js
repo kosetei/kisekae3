@@ -226,8 +226,8 @@ function renderCharacterList() {
           <form class="upload-form" data-type="${type}">
             <h3>${type === 'character' ? 'キャラ画像' : '服画像'}</h3>
             <label for="${type}-image">画像</label>
-            <input id="${type}-image" name="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple required />
-            <p class="hint">複数選択できます。IDは自動で割り当て、ファイル名は表示名になります。PNG / JPEG / WebP / GIF、1枚8 MB以下</p>
+            <input id="${type}-image" name="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/heic,image/heif,.heic,.heif" multiple required />
+            <p class="hint">複数選択できます。IDは自動で割り当て、ファイル名は表示名になります。PNG / JPEG / WebP / GIF / HEIC / HEIF、1枚8 MB以下</p>
             <button type="submit">追加</button>
             <span class="upload-status" role="status"></span>
           </form>`).join('')}
@@ -1236,7 +1236,14 @@ function setStatus(msg) {
 function readImageAsDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
+    reader.onload = () => {
+      if (/\.(heic|heif)$/i.test(file.name)) {
+        const mimeType = /\.heif$/i.test(file.name) ? 'image/heif' : 'image/heic';
+        resolve(String(reader.result).replace(/^data:[^;]+;/, `data:${mimeType};`));
+        return;
+      }
+      resolve(reader.result);
+    };
     reader.onerror = () => reject(new Error('画像を読み込めませんでした'));
     reader.readAsDataURL(file);
   });

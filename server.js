@@ -15,7 +15,7 @@ const GENERATED_METADATA_FILE = path.join(STORE_DIR, 'generated-metadata.json');
 const CATALOG_METADATA_FILE = path.join(STORE_DIR, 'catalog-metadata.json');
 const PORT = Number(process.env.PORT || 3000);
 
-const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg']);
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'heic', 'heif']);
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -27,6 +27,8 @@ const MIME = {
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
   '.gif': 'image/gif',
+  '.heic': 'image/heic',
+  '.heif': 'image/heif',
 };
 
 const SAFE_ID = /^[A-Za-z0-9_-]+$/;
@@ -37,7 +39,17 @@ const UPLOAD_TYPES = new Map([
   ['image/jpeg', { ext: 'jpg', matches: (data) => data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff }],
   ['image/webp', { ext: 'webp', matches: (data) => data.toString('ascii', 0, 4) === 'RIFF' && data.toString('ascii', 8, 12) === 'WEBP' }],
   ['image/gif', { ext: 'gif', matches: (data) => ['GIF87a', 'GIF89a'].includes(data.toString('ascii', 0, 6)) }],
+  ['image/heic', { ext: 'heic', matches: matchesHeif }],
+  ['image/heif', { ext: 'heif', matches: matchesHeif }],
 ]);
+
+function matchesHeif(data) {
+  if (data.length < 16 || data.toString('ascii', 4, 8) !== 'ftyp') return false;
+  const boxSize = data.readUInt32BE(0);
+  if (boxSize !== 0 && (boxSize < 16 || boxSize > data.length)) return false;
+  const brands = data.toString('ascii', 8, Math.min(data.length, boxSize || data.length));
+  return ['heic', 'heix', 'hevc', 'hevx', 'mif1', 'msf1'].some((brand) => brands.includes(brand));
+}
 
 // ---------------------------------------------------------------------------
 // Catalog: everything is driven by the filesystem, so files added later show up
@@ -570,8 +582,8 @@ function handleUpload(res, body) {
     return json(res, 400, { error: 'image data is required' });
   }
 
-  const match = image.match(/^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/);
-  if (!match) return json(res, 400, { error: 'Only PNG, JPEG, WebP, and GIF images are supported' });
+  const match = image.match(/^data:(image\/(?:png|jpeg|webp|gif|heic|heif));base64,([A-Za-z0-9+/]+={0,2})$/);
+  if (!match) return json(res, 400, { error: 'Only PNG, JPEG, WebP, GIF, HEIC, and HEIF images are supported' });
 
   const [, mimeType, encoded] = match;
   const data = Buffer.from(encoded, 'base64');
