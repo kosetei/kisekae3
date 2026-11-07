@@ -33,7 +33,7 @@ store/
 
 ## 動作
 
-キャラ一覧の「キャラ・服を追加」から画像とIDを指定して追加できます。ID欄には既存IDと重複しない `charaN` / `dN` が初期入力され、画像を選ぶとファイル名が入力されます。ファイル名のIDが既存のものと重複する場合は末尾に番号を付けます。PNG / JPEG / WebP / GIF（8 MB以下）を受け付けます。同じIDは上書きせずエラーになります。
+キャラ一覧・服一覧・着せ替え画面ではフォルダをアイコンと名前で先頭に並べ、クリックすると中身を表示します。整理画面でフォルダを開くと、フォルダ名を変更できます。初期表示では「未分類」を開きます。整理画面も同じフォルダ表示で、画像または画像左上のチェックボックスをクリックして複数選択できます。選択項目のつまみを目的のフォルダアイコンへドラッグするとまとめて振り分けられます。「フォルダを作成」で新しいグループを追加できます。フォルダ分けはアプリ内の表示分類で、画像ファイル自体は移動しません。情報は `store/catalog-metadata.json` に保存されます。キャラ一覧の「キャラ・服を追加」から画像を選んで追加でき、IDは既存と重複しない `charaN` / `dN` を自動で割り当てます。複数画像を選択すると一括追加し、個別の失敗があっても残りは続けて追加します。PNG / JPEG / WebP / GIF（1枚8 MB以下）を受け付けます。
 
 キャラ一覧 → キャラ画面 → 服を選ぶと:
 
@@ -44,11 +44,16 @@ store/
 API:
 
 - `GET /api/catalog` — キャラ・服・生成済みマップ
+- `POST /api/catalog-group {type, group}` — キャラまたは服のフォルダを作成
+- `PUT /api/catalog-group {type, group, newGroup}` — フォルダ名を変更
+- `DELETE /api/catalog-group {type, group}` — フォルダを削除して中のアイテムを未分類へ移動
 - `GET /api/config` — ワークフローJSONに設定された既定プロンプト
 - `GET /api/prompt-settings` / `PUT /api/prompt-settings` — プロンプトプリセットと服ごとの設定（`store/prompt-settings.json` に保存）
 - `PUT /api/generated-selection {character, dress, file}` — その服の第一選択画像を保存（`store/generated-preferences.json`）
 - `DELETE /api/generated-image {character, dress, file}` — 生成画像を削除
-- `POST /api/upload {type, id, image}` — キャラまたは服画像を追加（`image` はBase64 data URL）
+- `POST /api/upload {type, image, alias?}` — キャラまたは服画像を追加（IDは自動採番、`image` はBase64 data URL）
+- `PUT /api/catalog-item {type, id, alias, group}` — カタログ項目の表示名とフォルダ名を保存
+- `PUT /api/catalog-items {type, items: [{id, alias}], group}` — 複数項目を同じフォルダへ一括移動
 - `POST /api/generate {character, dress, prompt, seed, force, disableLora}` — 既存なら `{status:"existing"}`, なければ生成。`seed` は省略可能な0以上の安全な整数。`force: true` は既存結果を残したまま新しいバージョンを生成。`disableLora: true` はワークフロー内のLoRAローダーをバイパスして生成（省略時はワークフロー設定どおり）
 
 ## ComfyUI

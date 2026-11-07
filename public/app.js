@@ -2,6 +2,10 @@ const app = document.getElementById('app');
 const themeToggle = document.getElementById('theme-toggle');
 const state = {
   catalog: null,
+  selectedCatalogItems: { character: new Set(), clothes: new Set() },
+  catalogFolders: { characters: '', clothes: '' },
+  organizerFolders: { character: '', clothes: '' },
+  dressFolder: '',
   currentCharacter: null, // char id when on character view
   selectedDress: null,    // dress id on character view
   selectedGenerated: {},  // selected generated image URL per dress
@@ -133,7 +137,11 @@ function versionLabel(version, index) {
 
 function renderCharacterList() {
   app.className = 'home-page';
-  const cards = state.catalog.characters.map((c) => `
+  const characterFolders = groupedCatalogItems(state.catalog.characters, state.catalog.groups.characters);
+  const clothesFolders = groupedCatalogItems(state.catalog.clothes, state.catalog.groups.clothes);
+  const visibleCharacters = characterFolders.find(([group]) => group === state.catalogFolders.characters)?.[1] || [];
+  const visibleClothes = clothesFolders.find(([group]) => group === state.catalogFolders.clothes)?.[1] || [];
+  const cards = visibleCharacters.map((c) => `
     <a class="card" href="#/char/${esc(c.id)}">
       ${c.iconUrl ? `<img src="${c.iconUrl}" alt="${esc(c.name)}" loading="lazy" />` : '<div class="noimg">No icon</div>'}
       <div class="meta">
@@ -141,70 +149,276 @@ function renderCharacterList() {
         <span class="count">${generatedCount(c)} / ${state.catalog.clothes.length} 生成済み</span>
       </div>
     </a>`).join('');
-
+  const clothes = visibleClothes.map((d) => `
+    <div class="card small"><img src="${d.url}" alt="${esc(d.name)}" loading="lazy" /><div class="meta"><strong>${esc(d.name)}</strong></div></div>`).join('');
   app.innerHTML = `
     <h2>キャラを選ぶ</h2>
-    ${state.catalog.characters.length ? `<div class="grid">${cards}</div>` : '<p class="empty">store/characters/ に chara1.png のような画像を追加してください。</p>'}
+    ${state.catalog.characters.length ? `
+      ${renderFolderPicker(characterFolders, state.catalogFolders.characters, 'characters')}
+      ${state.catalogFolders.characters === null
+        ? '<p class="empty">フォルダを選ぶと中身が表示されます。</p>'
+        : cards ? `<div class="grid">${cards}</div>` : '<p class="empty">このフォルダにキャラはいません。</p>'}`
+      : '<p class="empty">store/characters/ に chara1.png のような画像を追加してください。</p>'}
     <details class="upload-section">
       <summary>キャラ・服を追加</summary>
       <div class="upload-grid">
         ${['character', 'clothes'].map((type) => `
           <form class="upload-form" data-type="${type}">
             <h3>${type === 'character' ? 'キャラ画像' : '服画像'}</h3>
-            <label for="${type}-id">ID</label>
-            <input id="${type}-id" name="id" type="text" required pattern="[A-Za-z0-9_-]+" maxlength="80" value="${nextUploadId(type)}" />
             <label for="${type}-image">画像</label>
-            <input id="${type}-image" name="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif" required />
-            <p class="hint">PNG / JPEG / WebP / GIF、8 MB以下</p>
+            <input id="${type}-image" name="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple required />
+            <p class="hint">複数選択できます。IDは自動で割り当て、ファイル名は表示名になります。PNG / JPEG / WebP / GIF、1枚8 MB以下</p>
             <button type="submit">追加</button>
             <span class="upload-status" role="status"></span>
           </form>`).join('')}
       </div>
     </details>
-    <details class="catalog-clothes">
+    <details class="catalog-clothes clothes-browser">
       <summary>登録済みの服を一覧表示</summary>
-      ${state.catalog.clothes.length ? `<div class="grid small">${state.catalog.clothes.map((d) => `
-        <div class="card small"><img src="${d.url}" alt="${esc(d.name)}" loading="lazy" /><div class="meta"><strong>${esc(d.name)}</strong></div></div>`).join('')}</div>` : '<p class="empty">store/clothes/ に服の画像を追加してください。</p>'}
+      ${state.catalog.clothes.length ? `
+        ${renderFolderPicker(clothesFolders, state.catalogFolders.clothes, 'clothes')}
+        ${state.catalogFolders.clothes === null
+          ? '<p class="empty">フォルダを選ぶと中身が表示されます。</p>'
+          : `<div class="grid small">${clothes || '<p class="empty">このフォルダに服はありません。</p>'}</div>`}`
+        : '<p class="empty">store/clothes/ に服の画像を追加してください。</p>'}
+    </details>
+    <details class="catalog-clothes catalog-editor">
+      <summary>登録済みデータの表示名・フォルダを編集</summary>
+      <p class="hint">画像または左上のチェックで複数選択し、選択項目のつまみ（⠿）をフォルダへドラッグするとまとめて移動します。</p>
+      ${renderCatalogOrganizer('character', state.catalog.characters, state.catalog.groups.characters)}
+      ${renderCatalogOrganizer('clothes', state.catalog.clothes, state.catalog.groups.clothes)}
     </details>`;
 
   app.querySelectorAll('.upload-form').forEach((form) => {
-    const idInput = form.querySelector('[name="id"]');
     const fileInput = form.querySelector('[name="image"]');
-    idInput.addEventListener('input', () => { idInput.dataset.edited = 'true'; });
     fileInput.addEventListener('change', () => {
-      if (!idInput.dataset.edited && fileInput.files[0]) {
-        const base = fileInput.files[0].name.replace(/\.[^.]+$/, '').replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 80);
-        idInput.value = uniqueUploadId(type, base || (type === 'character' ? 'chara' : 'd'));
-      }
+      const files = Array.from(fileInput.files);
+      form.querySelector('.upload-status').textContent = files.length > 1
+        ? `${files.length}枚選択中。IDは自動で割り当てます。`
+        : '';
     });
     form.addEventListener('submit', uploadImage);
   });
+  app.querySelectorAll('.catalog-edit-form').forEach((form) => {
+    form.addEventListener('submit', saveCatalogItem);
+  });
+  app.querySelectorAll('.catalog-item-select').forEach((checkbox) => {
+    checkbox.addEventListener('change', updateCatalogSelection);
+  });
+  app.querySelectorAll('.catalog-thumbnail-select').forEach((button) => {
+    button.addEventListener('click', () => {
+      const checkbox = button.closest('.catalog-edit-form').querySelector('.catalog-item-select');
+      checkbox.checked = !checkbox.checked;
+      checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  });
+  app.querySelectorAll('.catalog-group-form').forEach((form) => {
+    form.addEventListener('submit', createCatalogGroup);
+  });
+  app.querySelectorAll('.catalog-rename-group').forEach((form) => {
+    form.addEventListener('submit', renameCatalogGroup);
+  });
+  app.querySelectorAll('.catalog-drag-handle').forEach((handle) => {
+    handle.addEventListener('dragstart', startCatalogDrag);
+    handle.addEventListener('dragend', endCatalogDrag);
+  });
+  app.querySelectorAll('.catalog-folder[data-folder-view="organizer"]').forEach((lane) => {
+    lane.addEventListener('dragover', (event) => {
+      event.preventDefault();
+      lane.classList.add('drop-target');
+    });
+    lane.addEventListener('dragleave', (event) => {
+      if (!lane.contains(event.relatedTarget)) lane.classList.remove('drop-target');
+    });
+    lane.addEventListener('drop', dropCatalogItem);
+  });
+  app.querySelectorAll('.catalog-delete-group').forEach((button) => {
+    button.addEventListener('click', deleteCatalogGroup);
+  });
+  app.querySelectorAll('.catalog-folder').forEach((button) => {
+    button.addEventListener('click', selectCatalogFolder);
+  });
 }
 
-function uploadIds(type) {
-  const items = type === 'character' ? state.catalog.characters : state.catalog.clothes;
-  return new Set(items.map((item) => item.id.toLowerCase()));
+function renderFolderPicker(folders, activeGroup, view, type = view) {
+  return `
+    <nav class="catalog-folder-picker" aria-label="フォルダ">
+      ${folders.map(([group, items]) => `
+        <button type="button" class="catalog-folder ${activeGroup === group ? 'active' : ''}"
+          data-folder-view="${view}" data-type="${type}" data-group="${esc(group)}"
+          title="${esc(group || '未分類')} (${items.length})"
+          aria-label="${esc(group || '未分類')}、${items.length}件"
+          aria-pressed="${activeGroup === group}">
+          <span class="catalog-folder-icon" aria-hidden="true">📁</span>
+          <span class="catalog-folder-label">${esc(group || '未分類')}</span>
+        </button>`).join('')}
+    </nav>`;
 }
 
-function nextUploadId(type) {
-  const prefix = type === 'character' ? 'chara' : 'd';
-  const ids = uploadIds(type);
-  let number = 1;
-  while (ids.has(`${prefix}${number}`.toLowerCase())) number += 1;
-  return `${prefix}${number}`;
+function selectCatalogFolder(event) {
+  const { folderView, type, group } = event.currentTarget.dataset;
+  if (folderView === 'organizer') {
+    state.organizerFolders[type] = group;
+    state.selectedCatalogItems[type].clear();
+    renderCharacterList();
+    const editor = app.querySelector('.catalog-editor');
+    if (editor) editor.open = true;
+    return;
+  }
+  if (folderView === 'characters' || folderView === 'clothes') {
+    state.catalogFolders[folderView] = group;
+    renderCharacterList();
+    if (folderView === 'clothes') {
+      const clothesBrowser = app.querySelector('.clothes-browser');
+      if (clothesBrowser) clothesBrowser.open = true;
+    }
+    return;
+  }
+  if (folderView === 'dress') {
+    state.dressFolder = group;
+    renderCharacterView();
+  }
 }
 
-function uniqueUploadId(type, base) {
-  const ids = uploadIds(type);
-  if (!ids.has(base.toLowerCase())) return base;
-  let suffix = 2;
-  let candidate;
-  do {
-    const ending = `-${suffix}`;
-    candidate = `${base.slice(0, 80 - ending.length)}${ending}`;
-    suffix += 1;
-  } while (ids.has(candidate.toLowerCase()));
-  return candidate;
+function renderCatalogOrganizer(type, items, declaredGroups) {
+  const typeName = type === 'character' ? 'キャラ' : '服';
+  const groupedItems = groupedCatalogItems(items, declaredGroups);
+  const activeGroup = state.organizerFolders[type];
+  const activeItems = groupedItems.find(([group]) => group === activeGroup)?.[1] || [];
+  return `
+    <section class="catalog-organizer" data-type="${type}">
+      <h3>${typeName}</h3>
+      <form class="catalog-group-form" data-type="${type}">
+        <label>新しいフォルダ<input name="group" type="text" maxlength="100" required placeholder="例: 夏服" /></label>
+        <button type="submit">フォルダを作成</button>
+        <span class="upload-status" role="status"></span>
+      </form>
+      <p class="catalog-selection-status" data-type="${type}" role="status">チェックで複数選択し、選択項目のつまみをドラッグするとまとめて移動できます。</p>
+      ${renderFolderPicker(groupedItems, activeGroup, 'organizer', type)}
+      ${activeGroup === null
+        ? '<p class="empty">フォルダをクリックすると中身を表示します。選択した項目は上のフォルダアイコンへドラッグして移動できます。</p>'
+        : `<section class="catalog-folder-content">
+            ${activeGroup
+              ? `<form class="catalog-rename-group" data-type="${type}" data-group="${esc(activeGroup)}">
+                  <input name="newGroup" type="text" maxlength="100" required value="${esc(activeGroup)}" aria-label="フォルダ名" />
+                  <button type="submit">名前を変更</button>
+                  <button type="button" class="catalog-delete-group" data-type="${type}" data-group="${esc(activeGroup)}">フォルダを削除</button>
+                  <span class="upload-status" role="status"></span>
+                </form>`
+              : '<h4>未分類</h4>'}
+            <p class="catalog-group-status upload-status" role="status"></p>
+            <div class="catalog-group-items">
+              ${activeItems.length ? activeItems.map((item) => `
+                <form class="catalog-edit-form ${state.selectedCatalogItems[type].has(item.id) ? 'selected' : ''}" data-type="${type}" data-id="${esc(item.id)}">
+                  <input class="catalog-item-select" type="checkbox" aria-label="${esc(item.name)}を選択"
+                    ${state.selectedCatalogItems[type].has(item.id) ? 'checked' : ''} />
+                  <button class="catalog-drag-handle" type="button" draggable="true" aria-label="${esc(item.name)}をドラッグして移動">⠿</button>
+                  <button class="catalog-thumbnail-select" type="button"
+                    aria-label="${esc(item.name)}を選択" aria-pressed="${state.selectedCatalogItems[type].has(item.id)}">
+                    <img class="catalog-edit-thumbnail" src="${item.iconUrl || item.url}" alt="" loading="lazy" />
+                  </button>
+                  <span class="catalog-id">${typeName} · ${esc(item.id)}</span>
+                  <input name="alias" type="text" maxlength="100" value="${esc(item.name)}" aria-label="表示名" />
+                  <button type="submit">保存</button>
+                  <span class="upload-status" role="status"></span>
+                </form>`).join('') : '<p class="empty">このフォルダは空です。</p>'}
+            </div>
+          </section>`}
+    </section>`;
+}
+
+function groupedCatalogItems(items, declaredGroups) {
+  const groups = new Map();
+  if (declaredGroups) groups.set('', []);
+  for (const group of declaredGroups || []) groups.set(group, []);
+  for (const item of items) {
+    const group = item.group || '';
+    if (!groups.has(group)) groups.set(group, []);
+    groups.get(group).push(item);
+  }
+  return [...groups.entries()].sort(([a], [b]) => {
+    if (!a) return b ? -1 : 0;
+    if (!b) return 1;
+    return a.localeCompare(b, 'ja', { numeric: true });
+  });
+}
+
+function startCatalogDrag(event) {
+  const form = event.currentTarget.closest('.catalog-edit-form');
+  const selectedIds = state.selectedCatalogItems[form.dataset.type];
+  const ids = selectedIds.has(form.dataset.id) ? [...selectedIds] : [form.dataset.id];
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData('text/plain', JSON.stringify({
+    type: form.dataset.type,
+    ids,
+  }));
+  for (const id of ids) {
+    app.querySelector(`.catalog-edit-form[data-type="${form.dataset.type}"][data-id="${CSS.escape(id)}"]`)
+      ?.classList.add('dragging');
+  }
+}
+
+function endCatalogDrag(event) {
+  app.querySelectorAll('.catalog-edit-form.dragging').forEach((form) => form.classList.remove('dragging'));
+  app.querySelectorAll('.catalog-folder.drop-target').forEach((folder) => folder.classList.remove('drop-target'));
+}
+
+async function dropCatalogItem(event) {
+  event.preventDefault();
+  const folder = event.currentTarget;
+  folder.classList.remove('drop-target');
+  let dragged;
+  try {
+    dragged = JSON.parse(event.dataTransfer.getData('text/plain'));
+  } catch {
+    return;
+  }
+  if (dragged.type !== folder.dataset.type || !Array.isArray(dragged.ids) || !dragged.ids.length) return;
+
+  const forms = dragged.ids.map((id) => app.querySelector(
+    `.catalog-edit-form[data-type="${dragged.type}"][data-id="${CSS.escape(id)}"]`,
+  ));
+  if (forms.some((form) => !form)) return;
+  const items = forms.map((form) => ({ id: form.dataset.id, alias: form.elements.alias.value }));
+
+  try {
+    const result = await api('/api/catalog-items', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: dragged.type,
+        items,
+        group: folder.dataset.group,
+      }),
+    });
+    state.organizerFolders[dragged.type] = folder.dataset.group;
+    await refreshCatalog();
+    state.selectedCatalogItems[dragged.type].clear();
+    renderCharacterList();
+    const editor = app.querySelector('.catalog-editor');
+    if (editor) editor.open = true;
+    const status = app.querySelector(`.catalog-organizer[data-type="${dragged.type}"] .catalog-group-status`);
+    if (status) status.textContent = `${result.movedItems}件を「${folder.dataset.group || '未分類'}」へ移動しました`;
+  } catch (error) {
+    forms[0].querySelector('.upload-status').textContent = `移動失敗: ${error.message}`;
+  }
+}
+
+function updateCatalogSelection(event) {
+  const checkbox = event.currentTarget;
+  const form = checkbox.closest('.catalog-edit-form');
+  const { type, id } = form.dataset;
+  const selected = state.selectedCatalogItems[type];
+  if (checkbox.checked) selected.add(id);
+  else selected.delete(id);
+  form.classList.toggle('selected', checkbox.checked);
+  form.querySelector('.catalog-thumbnail-select').setAttribute('aria-pressed', String(checkbox.checked));
+  const status = app.querySelector(`.catalog-selection-status[data-type="${type}"]`);
+  if (status) {
+    status.textContent = selected.size
+      ? `${selected.size}件を選択中。選択項目のつまみをドラッグして移動できます。`
+      : 'チェックで複数選択し、選択項目のつまみをドラッグするとまとめて移動できます。';
+  }
 }
 
 function renderCharacterView() {
@@ -217,11 +431,14 @@ function renderCharacterView() {
   app.dataset.character = char.id;
 
   const sel = state.selectedDress;
+  const selectedDressName = state.catalog.clothes.find((dress) => dress.id === sel)?.name || sel;
   const versions = sel ? generatedVersions(char, sel) : [];
   const selected = sel ? selectedVersion(char, sel) : null;
   const selUrl = selected?.url || null;
   const displaySrc = selUrl || char.iconUrl;
   const missing = state.catalog.clothes.filter((d) => !generatedVersions(char, d.id).length);
+  const dressFolders = groupedCatalogItems(state.catalog.clothes, state.catalog.groups.clothes);
+  const visibleDresses = dressFolders.find(([group]) => group === state.dressFolder)?.[1] || [];
   const generatedTotal = versions.length;
   const stageImages = document.querySelectorAll('#stage img');
   const previousSrc = stageImages.length
@@ -242,21 +459,18 @@ function renderCharacterView() {
     <div class="character-layout">
       <section class="stage">
         <div id="stage" class="stage-image ${state.busy ? 'busy' : ''}">
-          ${stageSrc ? `<img src="${stageSrc}" alt="${esc(char.name)}${sel ? ` — ${esc(sel)}` : ''}" />` : '<p class="empty">画像がありません</p>'}
+          ${stageSrc ? `<img src="${stageSrc}" alt="${esc(char.name)}${sel ? ` — ${esc(selectedDressName)}` : ''}" />` : '<p class="empty">画像がありません</p>'}
           ${state.busy ? '<div class="spinner">生成中…</div>' : ''}
         </div>
-        <p class="stage-caption">
-          ${sel ? `選択中: ${esc(sel)} — ${selUrl ? `生成済み (${versions.length}件)` : '未生成（プロンプトを確認してから生成できます）'}` : '基準画像（icon）'}
-        </p>
       </section>
 
       <section class="dresses">
         <h3>服を選ぶ</h3>
-        <p class="hint">未生成の選択中の服をもう一度クリック（タップ）すると生成します。</p>
-        <div class="dress-grid">
-        ${state.catalog.clothes.map((d) => {
-          const done = generatedVersions(char, d.id).length > 0;
-          return `
+        ${state.dressFolder === null
+          ? '<p class="empty">フォルダを選ぶと服が表示されます。</p>'
+          : `<div class="dress-grid">${visibleDresses.map((d) => {
+            const done = generatedVersions(char, d.id).length > 0;
+            return `
             <button class="card small dress ${d.id === sel ? 'selected' : ''}" data-dress="${esc(d.id)}">
               <img src="${d.url}" alt="${esc(d.name)}" loading="lazy" />
               <div class="meta">
@@ -264,8 +478,11 @@ function renderCharacterView() {
                 <span class="badge ${done ? 'done' : 'todo'}">${done ? '生成済み' : '未生成'}</span>
               </div>
             </button>`;
-        }).join('')}
-        </div>
+          }).join('')}</div>`}
+        <div class="dress-folder-picker">${renderFolderPicker(dressFolders, state.dressFolder, 'dress')}</div>
+        ${sel ? `<p class="stage-caption">
+          選択中: ${esc(selectedDressName)} — ${selUrl ? `生成済み (${versions.length}件)` : '未生成'}
+        </p>` : ''}
       </section>
     </div>
 
@@ -276,7 +493,7 @@ function renderCharacterView() {
           ${generatedTotal ? `<div class="generated-image-grid">
             ${versions.map((version, index) => `
               <article class="generated-image-card ${version.primary ? 'primary' : ''}">
-                <img src="${version.url}" alt="${esc(sel)} ${esc(versionLabel(version, index))}" loading="lazy" />
+                <img src="${version.url}" alt="${esc(selectedDressName)} ${esc(versionLabel(version, index))}" loading="lazy" />
                 <div class="generated-image-meta">
                   ${version.primary ? '<span class="primary-badge">第一選択</span>' : ''}
                   <span>${esc(versionLabel(version, index))}</span>
@@ -348,10 +565,11 @@ function renderCharacterView() {
       </div>
     </details>`;
 
-  app.querySelector('.dress-grid').scrollLeft = dressScrollLeft;
+  const dressGrid = app.querySelector('.dress-grid');
+  if (dressGrid) dressGrid.scrollLeft = dressScrollLeft;
 
   if (displaySrc && displaySrc !== stageSrc) {
-    transitionStageImage(displaySrc, `${char.name}${sel ? ` — ${sel}` : ''}`);
+    transitionStageImage(displaySrc, `${char.name}${sel ? ` — ${selectedDressName}` : ''}`);
   } else {
     state.stageImageRequest += 1;
   }
@@ -374,6 +592,9 @@ function renderCharacterView() {
   });
   app.querySelectorAll('button.dress').forEach((btn) => {
     btn.addEventListener('click', () => selectDress(btn.dataset.dress));
+  });
+  app.querySelectorAll('.catalog-folder[data-folder-view="dress"]').forEach((button) => {
+    button.addEventListener('click', selectCatalogFolder);
   });
   const versionSelect = document.getElementById('generated-version');
   if (versionSelect) {
@@ -422,6 +643,71 @@ function renderCharacterView() {
   if (generateSelectedBtn) {
     generateSelectedBtn.disabled = state.busy;
     generateSelectedBtn.addEventListener('click', () => generate(char, sel));
+  }
+}
+
+async function deleteCatalogGroup(event) {
+  const button = event.currentTarget;
+  const { type, group } = button.dataset;
+  if (!window.confirm(`フォルダ「${group}」を削除しますか？中のアイテムは未分類に移動します。`)) return;
+
+  button.disabled = true;
+  try {
+    await api('/api/catalog-group', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, group }),
+    });
+    state.organizerFolders[type] = null;
+    if (type === 'character' && state.catalogFolders.characters === group) state.catalogFolders.characters = null;
+    if (type === 'clothes' && state.catalogFolders.clothes === group) state.catalogFolders.clothes = null;
+    if (type === 'clothes' && state.dressFolder === group) state.dressFolder = null;
+    await refreshCatalog();
+    renderCharacterList();
+    const editor = app.querySelector('.catalog-editor');
+    if (editor) editor.open = true;
+  } catch (error) {
+    const organizer = button.closest('.catalog-organizer');
+    const status = organizer?.querySelector('.catalog-folder-content .catalog-group-status');
+    if (status) status.textContent = `削除失敗: ${error.message}`;
+    else setStatus(`フォルダ削除失敗: ${error.message}`);
+    if (button.isConnected) button.disabled = false;
+  }
+}
+
+async function renameCatalogGroup(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  const status = form.querySelector('.upload-status');
+  button.disabled = true;
+  status.textContent = '変更中…';
+  try {
+    const result = await api('/api/catalog-group', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: form.dataset.type,
+        group: form.dataset.group,
+        newGroup: form.elements.newGroup.value,
+      }),
+    });
+    const { type, group, newGroup } = result;
+    state.organizerFolders[type] = newGroup;
+    if (type === 'character' && state.catalogFolders.characters === group) state.catalogFolders.characters = newGroup;
+    if (type === 'clothes' && state.catalogFolders.clothes === group) state.catalogFolders.clothes = newGroup;
+    if (type === 'clothes' && state.dressFolder === group) state.dressFolder = newGroup;
+    await refreshCatalog();
+    renderCharacterList();
+    const editor = app.querySelector('.catalog-editor');
+    if (editor) editor.open = true;
+    const organizer = app.querySelector(`.catalog-organizer[data-type="${type}"]`);
+    const renamedForm = [...(organizer?.querySelectorAll('.catalog-rename-group') || [])]
+      .find((candidate) => candidate.dataset.group === newGroup);
+    if (renamedForm) renamedForm.querySelector('.upload-status').textContent = 'フォルダ名を変更しました';
+  } catch (error) {
+    if (status.isConnected) status.textContent = `変更失敗: ${error.message}`;
+    if (button.isConnected) button.disabled = false;
   }
 }
 
@@ -723,37 +1009,139 @@ function readImageAsDataUrl(file) {
   });
 }
 
+function uploadFileAlias(file) {
+  return file.name.replace(/\.[^.]+$/, '').trim().slice(0, 100);
+}
+
 async function uploadImage(event) {
   event.preventDefault();
   if (state.uploading) return;
 
   const form = event.currentTarget;
-  const id = form.elements.id.value.trim();
-  const file = form.elements.image.files[0];
-  const status = form.querySelector('.upload-status');
-  if (!file) return;
-  if (file.size > 8 * 1024 * 1024) {
-    status.textContent = '画像は8 MB以下にしてください';
-    return;
-  }
+  const type = form.dataset.type;
+  const files = Array.from(form.elements.image.files);
+  if (!files.length) return;
 
-  const button = form.querySelector('button[type="submit"]');
+  const buttons = Array.from(app.querySelectorAll('.upload-form button[type="submit"]'));
   state.uploading = true;
-  button.disabled = true;
-  status.textContent = '追加中…';
+  buttons.forEach((button) => { button.disabled = true; });
+  const failures = [];
+  let uploaded = 0;
+  const uploadedIds = [];
+
   try {
-    const image = await readImageAsDataUrl(file);
-    await api('/api/upload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: form.dataset.type, id, image }),
-    });
-    await refreshCatalog();
-    route();
-  } catch (error) {
-    status.textContent = `追加失敗: ${error.message}`;
+    for (const [index, file] of files.entries()) {
+      if (file.size > 8 * 1024 * 1024) {
+        failures.push(`${file.name}: 画像は8 MB以下にしてください`);
+        continue;
+      }
+
+      const currentStatus = form.querySelector('.upload-status');
+      if (currentStatus) currentStatus.textContent = `追加中… (${index + 1}/${files.length}) ${file.name}`;
+      try {
+        const image = await readImageAsDataUrl(file);
+        const result = await api('/api/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type, alias: uploadFileAlias(file), image }),
+        });
+        uploaded += 1;
+        uploadedIds.push(result.id);
+      } catch (error) {
+        failures.push(`${file.name}: ${error.message}`);
+      }
+    }
+
+    let refreshError = null;
+    if (uploaded) {
+      try {
+        await refreshCatalog();
+        route();
+      } catch (error) {
+        refreshError = error;
+      }
+    }
+
+    const summary = [`${uploaded}枚追加しました${uploadedIds.length ? `（${uploadedIds.join('、')}）` : ''}。`, ...failures, ...(refreshError ? [`一覧の更新に失敗しました: ${refreshError.message}`] : [])]
+      .filter(Boolean)
+      .join('\n');
+    const result = app.querySelector(`.upload-form[data-type="${type}"] .upload-status`);
+    if (result) {
+      const section = app.querySelector('.upload-section');
+      if (section) section.open = true;
+      result.textContent = summary;
+    }
   } finally {
     state.uploading = false;
+    buttons.forEach((button) => {
+      if (button.isConnected) button.disabled = false;
+    });
+  }
+}
+
+async function saveCatalogItem(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  const status = form.querySelector('.upload-status');
+  button.disabled = true;
+  status.textContent = '保存中…';
+  try {
+    const items = form.dataset.type === 'character' ? state.catalog.characters : state.catalog.clothes;
+    const currentItem = items.find((item) => item.id === form.dataset.id);
+    await api('/api/catalog-item', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: form.dataset.type,
+        id: form.dataset.id,
+        alias: form.elements.alias.value,
+        group: currentItem?.group || '',
+      }),
+    });
+    await refreshCatalog();
+    renderCharacterList();
+    const savedForm = [...app.querySelectorAll('.catalog-edit-form')]
+      .find((item) => item.dataset.type === form.dataset.type && item.dataset.id === form.dataset.id);
+    if (savedForm) {
+      const details = savedForm.closest('details');
+      if (details) details.open = true;
+      savedForm.querySelector('.upload-status').textContent = '保存しました';
+    }
+  } catch (error) {
+    if (status.isConnected) status.textContent = `保存失敗: ${error.message}`;
+  } finally {
+    if (button.isConnected) button.disabled = false;
+  }
+}
+
+async function createCatalogGroup(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  const status = form.querySelector('.upload-status');
+  button.disabled = true;
+  status.textContent = '作成中…';
+  try {
+    const created = await api('/api/catalog-group', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: form.dataset.type, group: form.elements.group.value }),
+    });
+    state.organizerFolders[form.dataset.type] = created.group;
+    await refreshCatalog();
+    renderCharacterList();
+    const editor = app.querySelector('.catalog-editor');
+    if (editor) editor.open = true;
+    const organizer = app.querySelector(`.catalog-organizer[data-type="${form.dataset.type}"]`);
+    const groupForm = organizer?.querySelector('.catalog-group-form');
+    if (groupForm) {
+      groupForm.querySelector('.upload-status').textContent = 'フォルダを作成しました。アイテムをドラッグして入れてください。';
+      groupForm.elements.group.value = '';
+    }
+  } catch (error) {
+    if (status.isConnected) status.textContent = `作成失敗: ${error.message}`;
+  } finally {
     if (button.isConnected) button.disabled = false;
   }
 }

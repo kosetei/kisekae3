@@ -11,6 +11,7 @@ const PUBLIC_DIR = path.join(ROOT, 'public');
 const STORE_DIR = path.join(ROOT, 'store');
 const PROMPT_SETTINGS_FILE = path.join(STORE_DIR, 'prompt-settings.json');
 const GENERATED_PREFERENCES_FILE = path.join(STORE_DIR, 'generated-preferences.json');
+const CATALOG_METADATA_FILE = path.join(STORE_DIR, 'catalog-metadata.json');
 const PORT = Number(process.env.PORT || 3000);
 
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg']);
@@ -127,18 +128,71 @@ function writeGeneratedPreferences(preferences) {
   }
 }
 
+function readCatalogMetadata() {
+  if (!fs.existsSync(CATALOG_METADATA_FILE)) {
+    return { characters: {}, clothes: {}, characterGroups: [], clothesGroups: [] };
+  }
+  const metadata = JSON.parse(fs.readFileSync(CATALOG_METADATA_FILE, 'utf8'));
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    throw new Error('Invalid catalog metadata');
+  }
+  for (const type of ['characters', 'clothes']) {
+    const items = metadata[type] ?? {};
+    if (!items || typeof items !== 'object' || Array.isArray(items)) {
+      throw new Error('Invalid catalog metadata');
+    }
+    for (const [id, item] of Object.entries(items)) {
+      if (!SAFE_ID.test(id) || !item || typeof item !== 'object' || Array.isArray(item)
+        || typeof item.alias !== 'string' || typeof item.group !== 'string'
+        || item.alias.length > 100 || item.group.length > 100) {
+        throw new Error('Invalid catalog metadata');
+      }
+    }
+  }
+  for (const type of ['characterGroups', 'clothesGroups']) {
+    const groups = metadata[type] ?? [];
+    if (!Array.isArray(groups) || groups.some((group) => typeof group !== 'string'
+      || !group.trim() || group.length > 100)) {
+      throw new Error('Invalid catalog metadata');
+    }
+  }
+  return {
+    characters: metadata.characters ?? {},
+    clothes: metadata.clothes ?? {},
+    characterGroups: metadata.characterGroups ?? [],
+    clothesGroups: metadata.clothesGroups ?? [],
+  };
+}
+
+function writeCatalogMetadata(metadata) {
+  fs.mkdirSync(STORE_DIR, { recursive: true });
+  const temporaryFile = `${CATALOG_METADATA_FILE}.${randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(temporaryFile, JSON.stringify(metadata, null, 2), 'utf8');
+    fs.renameSync(temporaryFile, CATALOG_METADATA_FILE);
+  } finally {
+    if (fs.existsSync(temporaryFile)) fs.unlinkSync(temporaryFile);
+  }
+}
+
 function scanCatalog() {
   const clothesDir = path.join(STORE_DIR, 'clothes');
   const charactersDir = path.join(STORE_DIR, 'characters');
   const generatedDir = path.join(STORE_DIR, 'generated');
   const generatedPreferences = readGeneratedPreferences();
+  const metadata = readCatalogMetadata();
 
   const clothes = [];
   if (fs.existsSync(clothesDir)) {
     for (const f of fs.readdirSync(clothesDir)) {
       if (!fs.statSync(path.join(clothesDir, f)).isFile() || !isImage(f)) continue;
       const id = path.basename(f, path.extname(f));
-      clothes.push({ id, name: id, url: `/store/clothes/${encodeURIComponent(f)}` });
+      clothes.push({
+        id,
+        name: metadata.clothes[id]?.alias || id,
+        group: metadata.clothes[id]?.group || '',
+        url: `/store/clothes/${encodeURIComponent(f)}`,
+      });
     }
   }
   clothes.sort((a, b) => naturalSort(a.id, b.id));
@@ -173,7 +227,8 @@ function scanCatalog() {
 
       characters.push({
         id,
-        name: id,
+        name: metadata.characters[id]?.alias || id,
+        group: metadata.characters[id]?.group || '',
         iconUrl: characterImage?.url ?? null,
         generated,
       });
@@ -181,7 +236,14 @@ function scanCatalog() {
   }
   characters.sort((a, b) => naturalSort(a.id, b.id));
 
-  return { clothes, characters };
+  return {
+    clothes,
+    characters,
+    groups: {
+      characters: metadata.characterGroups,
+      clothes: metadata.clothesGroups,
+    },
+  };
 }
 
 function invalidPromptSettings(message) {
@@ -391,13 +453,29 @@ function identifierExists(dir, id, includeDirectories = false) {
   });
 }
 
+function nextCatalogId(type) {
+  const isCharacter = type === 'character';
+  const dir = path.join(STORE_DIR, isCharacter ? 'characters' : 'clothes');
+  const prefix = isCharacter ? 'chara' : 'd';
+  let number = 1;
+  while (identifierExists(dir, `${prefix}${number}`, isCharacter)) number += 1;
+  return `${prefix}${number}`;
+}
+
 function handleUpload(res, body) {
-  const { type, id, image } = body ?? {};
+  const { type, image, alias: requestedAlias } = body ?? {};
   if (!['character', 'clothes'].includes(type)) {
     return json(res, 400, { error: 'type must be character or clothes' });
   }
+  const dirName = type === 'character' ? 'characters' : 'clothes';
+  const targetDir = path.join(STORE_DIR, dirName);
+  const id = body?.id === undefined ? nextCatalogId(type) : body.id;
   if (typeof id !== 'string' || !SAFE_ID.test(id)) {
     return json(res, 400, { error: 'ID must use only letters, numbers, underscores, and hyphens' });
+  }
+  if (requestedAlias !== undefined
+    && (typeof requestedAlias !== 'string' || requestedAlias.length > 100)) {
+    return json(res, 400, { error: 'alias must be a string of 100 characters or fewer' });
   }
   if (typeof image !== 'string') {
     return json(res, 400, { error: 'image data is required' });
@@ -414,8 +492,6 @@ function handleUpload(res, body) {
   const fileType = UPLOAD_TYPES.get(mimeType);
   if (!fileType.matches(data)) return json(res, 400, { error: 'Image content does not match its file type' });
 
-  const dirName = type === 'character' ? 'characters' : 'clothes';
-  const targetDir = path.join(STORE_DIR, dirName);
   if (identifierExists(targetDir, id, type === 'character')) {
     return json(res, 409, { error: `ID already exists: ${id}` });
   }
@@ -428,7 +504,158 @@ function handleUpload(res, body) {
     if (error.code === 'EEXIST') return json(res, 409, { error: `ID already exists: ${id}` });
     throw error;
   }
+  if (requestedAlias?.trim()) {
+    try {
+      const metadata = readCatalogMetadata();
+      metadata[dirName][id] = { alias: requestedAlias.trim(), group: '' };
+      writeCatalogMetadata(metadata);
+    } catch (error) {
+      fs.unlinkSync(path.join(targetDir, file));
+      throw error;
+    }
+  }
   return json(res, 201, { id, url: `/store/${dirName}/${encodeURIComponent(file)}` });
+}
+
+function handleCatalogItem(res, body) {
+  const { type, id, alias, group } = body ?? {};
+  if (!['character', 'clothes'].includes(type)) {
+    return json(res, 400, { error: 'type must be character or clothes' });
+  }
+  if (typeof id !== 'string' || !SAFE_ID.test(id)) {
+    return json(res, 400, { error: 'Invalid catalog ID' });
+  }
+  if (typeof alias !== 'string' || alias.length > 100
+    || typeof group !== 'string' || group.length > 100) {
+    return json(res, 400, { error: 'alias and group must be strings of 100 characters or fewer' });
+  }
+
+  const dirName = type === 'character' ? 'characters' : 'clothes';
+  if (!identifierExists(path.join(STORE_DIR, dirName), id, type === 'character')) {
+    return json(res, 404, { error: `Catalog item not found: ${id}` });
+  }
+  const metadata = readCatalogMetadata();
+  metadata[dirName][id] = { alias: alias.trim(), group: group.trim() };
+  const groupsKey = type === 'character' ? 'characterGroups' : 'clothesGroups';
+  if (group.trim() && !metadata[groupsKey].includes(group.trim())) {
+    metadata[groupsKey].push(group.trim());
+  }
+  writeCatalogMetadata(metadata);
+  return json(res, 200, { id, alias: alias.trim(), group: group.trim() });
+}
+
+function handleCatalogItems(res, body) {
+  const { type, items, group } = body ?? {};
+  if (!['character', 'clothes'].includes(type)) {
+    return json(res, 400, { error: 'type must be character or clothes' });
+  }
+  if (!Array.isArray(items) || !items.length || items.length > 500
+    || items.some((item) => !item || typeof item !== 'object' || Array.isArray(item)
+      || typeof item.id !== 'string' || !SAFE_ID.test(item.id)
+      || typeof item.alias !== 'string' || item.alias.length > 100)
+    || new Set(items.map((item) => item.id)).size !== items.length) {
+    return json(res, 400, { error: 'items must contain unique valid IDs and aliases' });
+  }
+  if (typeof group !== 'string' || group.length > 100) {
+    return json(res, 400, { error: 'group must be a string of 100 characters or fewer' });
+  }
+
+  const dirName = type === 'character' ? 'characters' : 'clothes';
+  if (items.some((item) => !identifierExists(path.join(STORE_DIR, dirName), item.id, type === 'character'))) {
+    return json(res, 404, { error: 'One or more catalog items were not found' });
+  }
+
+  const metadata = readCatalogMetadata();
+  const groupsKey = type === 'character' ? 'characterGroups' : 'clothesGroups';
+  const normalizedGroup = group.trim();
+  let movedItems = 0;
+  for (const { id, alias } of items) {
+    const previousGroup = metadata[dirName][id]?.group || '';
+    if (previousGroup !== normalizedGroup) movedItems += 1;
+    metadata[dirName][id] = { alias: alias.trim(), group: normalizedGroup };
+  }
+  if (normalizedGroup && !metadata[groupsKey].includes(normalizedGroup)) {
+    metadata[groupsKey].push(normalizedGroup);
+  }
+  writeCatalogMetadata(metadata);
+  return json(res, 200, { movedItems, ids: items.map((item) => item.id) });
+}
+
+function handleCatalogGroup(res, body) {
+  const { type, group } = body ?? {};
+  if (!['character', 'clothes'].includes(type)) {
+    return json(res, 400, { error: 'type must be character or clothes' });
+  }
+  if (typeof group !== 'string' || !group.trim() || group.trim().length > 100) {
+    return json(res, 400, { error: 'group must be a non-empty string of 100 characters or fewer' });
+  }
+  const groupsKey = type === 'character' ? 'characterGroups' : 'clothesGroups';
+  const normalizedGroup = group.trim();
+  const metadata = readCatalogMetadata();
+  if (metadata[groupsKey].some((existing) => existing.toLocaleLowerCase() === normalizedGroup.toLocaleLowerCase())) {
+    return json(res, 409, { error: `Folder already exists: ${normalizedGroup}` });
+  }
+  metadata[groupsKey].push(normalizedGroup);
+  writeCatalogMetadata(metadata);
+  return json(res, 201, { group: normalizedGroup });
+}
+
+function handleRenameCatalogGroup(res, body) {
+  const { type, group, newGroup } = body ?? {};
+  if (!['character', 'clothes'].includes(type)) {
+    return json(res, 400, { error: 'type must be character or clothes' });
+  }
+  if (typeof group !== 'string' || !group.trim() || group.trim().length > 100
+    || typeof newGroup !== 'string' || !newGroup.trim() || newGroup.trim().length > 100) {
+    return json(res, 400, { error: 'group and newGroup must be non-empty strings of 100 characters or fewer' });
+  }
+  const groupsKey = type === 'character' ? 'characterGroups' : 'clothesGroups';
+  const itemsKey = type === 'character' ? 'characters' : 'clothes';
+  const oldName = group.trim();
+  const normalizedName = newGroup.trim();
+  const metadata = readCatalogMetadata();
+  const existingName = metadata[groupsKey].find((existing) => existing === oldName);
+  if (!existingName) return json(res, 404, { error: `Folder not found: ${oldName}` });
+  if (metadata[groupsKey].some((existing) => existing !== existingName
+    && existing.toLocaleLowerCase() === normalizedName.toLocaleLowerCase())) {
+    return json(res, 409, { error: `Folder already exists: ${normalizedName}` });
+  }
+
+  metadata[groupsKey] = metadata[groupsKey].map((existing) => (
+    existing === existingName ? normalizedName : existing
+  ));
+  for (const item of Object.values(metadata[itemsKey])) {
+    if (item.group === existingName) item.group = normalizedName;
+  }
+  writeCatalogMetadata(metadata);
+  return json(res, 200, { type, group: existingName, newGroup: normalizedName });
+}
+
+function handleDeleteCatalogGroup(res, body) {
+  const { type, group } = body ?? {};
+  if (!['character', 'clothes'].includes(type)) {
+    return json(res, 400, { error: 'type must be character or clothes' });
+  }
+  if (typeof group !== 'string' || !group.trim() || group.trim().length > 100) {
+    return json(res, 400, { error: 'group must be a non-empty string of 100 characters or fewer' });
+  }
+  const groupsKey = type === 'character' ? 'characterGroups' : 'clothesGroups';
+  const itemsKey = type === 'character' ? 'characters' : 'clothes';
+  const normalizedGroup = group.trim();
+  const metadata = readCatalogMetadata();
+  const storedGroup = metadata[groupsKey].find((existing) => existing === normalizedGroup);
+  if (!storedGroup) return json(res, 404, { error: `Folder not found: ${normalizedGroup}` });
+
+  let movedItems = 0;
+  for (const item of Object.values(metadata[itemsKey])) {
+    if (item.group === storedGroup) {
+      item.group = '';
+      movedItems += 1;
+    }
+  }
+  metadata[groupsKey] = metadata[groupsKey].filter((existing) => existing !== storedGroup);
+  writeCatalogMetadata(metadata);
+  return json(res, 200, { group: storedGroup, movedItems });
 }
 
 // ---------------------------------------------------------------------------
@@ -485,6 +712,21 @@ const server = http.createServer(async (req, res) => {
   try {
     if (pathname === '/api/catalog' && req.method === 'GET') {
       return json(res, 200, scanCatalog());
+    }
+    if (pathname === '/api/catalog-item' && req.method === 'PUT') {
+      return handleCatalogItem(res, await readBody(req));
+    }
+    if (pathname === '/api/catalog-items' && req.method === 'PUT') {
+      return handleCatalogItems(res, await readBody(req));
+    }
+    if (pathname === '/api/catalog-group' && req.method === 'POST') {
+      return handleCatalogGroup(res, await readBody(req));
+    }
+    if (pathname === '/api/catalog-group' && req.method === 'PUT') {
+      return handleRenameCatalogGroup(res, await readBody(req));
+    }
+    if (pathname === '/api/catalog-group' && req.method === 'DELETE') {
+      return handleDeleteCatalogGroup(res, await readBody(req));
     }
     if (pathname === '/api/config' && req.method === 'GET') {
       return json(res, 200, { prompt: getDefaultPrompt(), seed: getDefaultSeed() });
