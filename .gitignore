@@ -14,3 +14,6 @@
 
 # Local character, clothing, generated-image, and prompt settings data.
 store/
+
+# Local environment configuration.
+.env
