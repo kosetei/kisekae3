@@ -17,3 +17,4 @@ store/
 
 # Local environment configuration.
 .env
+.vscode/tasks.json
