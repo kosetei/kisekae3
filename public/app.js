@@ -10,6 +10,7 @@ const state = {
   randomCharacterIds: [],
   characterThumbnailFit: localStorage.getItem('kisekae3-character-thumbnail-fit') === 'cover' ? 'cover' : 'contain',
   organizerFolders: { character: '', clothes: '' },
+  organizerOpen: { character: true, clothes: true },
   dressFolder: '',
   currentCharacter: null, // char id when on character view
   selectedDress: null,    // dress id on character view
@@ -161,6 +162,9 @@ function versionLabel(version, index) {
 // ---------------------------------------------------------------------------
 
 function renderCharacterList() {
+  app.querySelectorAll('.catalog-organizer').forEach((organizer) => {
+    state.organizerOpen[organizer.dataset.type] = organizer.open;
+  });
   app.className = 'home-page';
   const characterFolders = groupedCatalogItems(state.catalog.characters, state.catalog.groups.characters);
   const clothesFolders = groupedCatalogItems(state.catalog.clothes, state.catalog.groups.clothes);
@@ -287,6 +291,11 @@ function renderCharacterList() {
   app.querySelectorAll('.catalog-group-form').forEach((form) => {
     form.addEventListener('submit', createCatalogGroup);
   });
+  app.querySelectorAll('.catalog-organizer').forEach((organizer) => {
+    organizer.addEventListener('toggle', () => {
+      state.organizerOpen[organizer.dataset.type] = organizer.open;
+    });
+  });
   app.querySelectorAll('.catalog-rename-group').forEach((form) => {
     form.addEventListener('submit', renameCatalogGroup);
   });
@@ -378,8 +387,8 @@ function renderCatalogOrganizer(type, items, declaredGroups) {
   const activeGroup = state.organizerFolders[type];
   const activeItems = groupedItems.find(([group]) => group === activeGroup)?.[1] || [];
   return `
-    <section class="catalog-organizer" data-type="${type}">
-      <h3>${typeName}</h3>
+    <details class="catalog-organizer" data-type="${type}" ${state.organizerOpen[type] ? 'open' : ''}>
+      <summary>${typeName}の編集 (${items.length}件)</summary>
       <form class="catalog-group-form" data-type="${type}">
         <label>新しいフォルダ<input name="group" type="text" maxlength="100" required placeholder="例: 夏服" /></label>
         <button type="submit">フォルダを作成</button>
@@ -416,7 +425,7 @@ function renderCatalogOrganizer(type, items, declaredGroups) {
                 </form>`).join('') : '<p class="empty">このフォルダは空です。</p>'}
             </div>
           </section>`}
-    </section>`;
+    </details>`;
 }
 
 function groupedCatalogItems(items, declaredGroups) {

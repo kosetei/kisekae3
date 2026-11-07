@@ -144,7 +144,7 @@ button.card { cursor: pointer; font: inherit; text-align: left; }
 .catalog-group { grid-column: 1 / -1; margin: 14px 0 0; color: var(--muted); font-size: 15px; }
 .catalog-editor > .hint { margin: 8px 0; }
 .catalog-organizer { margin-top: 18px; }
-.catalog-organizer h3 { margin-bottom: 8px; }
+.catalog-organizer > summary { cursor: pointer; font-size: 15px; font-weight: 600; }
 .catalog-group-form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-bottom: 10px; }
 .catalog-group-form label { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
 .catalog-group-form input, .catalog-edit-form input { padding: 7px 8px; border: 1px solid var(--input-border); border-radius: 6px; background: var(--field-bg); color: var(--text); font: inherit; }
