@@ -152,7 +152,7 @@ function renderCharacterList() {
           <form class="upload-form" data-type="${type}">
             <h3>${type === 'character' ? 'キャラ画像' : '服画像'}</h3>
             <label for="${type}-id">ID</label>
-            <input id="${type}-id" name="id" type="text" required pattern="[A-Za-z0-9_-]+" maxlength="80" placeholder="${type === 'character' ? 'chara1' : 'd1'}" />
+            <input id="${type}-id" name="id" type="text" required pattern="[A-Za-z0-9_-]+" maxlength="80" value="${nextUploadId(type)}" />
             <label for="${type}-image">画像</label>
             <input id="${type}-image" name="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif" required />
             <p class="hint">PNG / JPEG / WebP / GIF、8 MB以下</p>
@@ -173,11 +173,38 @@ function renderCharacterList() {
     idInput.addEventListener('input', () => { idInput.dataset.edited = 'true'; });
     fileInput.addEventListener('change', () => {
       if (!idInput.dataset.edited && fileInput.files[0]) {
-        idInput.value = fileInput.files[0].name.replace(/\.[^.]+$/, '');
+        const base = fileInput.files[0].name.replace(/\.[^.]+$/, '').replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 80);
+        idInput.value = uniqueUploadId(type, base || (type === 'character' ? 'chara' : 'd'));
       }
     });
     form.addEventListener('submit', uploadImage);
   });
+}
+
+function uploadIds(type) {
+  const items = type === 'character' ? state.catalog.characters : state.catalog.clothes;
+  return new Set(items.map((item) => item.id.toLowerCase()));
+}
+
+function nextUploadId(type) {
+  const prefix = type === 'character' ? 'chara' : 'd';
+  const ids = uploadIds(type);
+  let number = 1;
+  while (ids.has(`${prefix}${number}`.toLowerCase())) number += 1;
+  return `${prefix}${number}`;
+}
+
+function uniqueUploadId(type, base) {
+  const ids = uploadIds(type);
+  if (!ids.has(base.toLowerCase())) return base;
+  let suffix = 2;
+  let candidate;
+  do {
+    const ending = `-${suffix}`;
+    candidate = `${base.slice(0, 80 - ending.length)}${ending}`;
+    suffix += 1;
+  } while (ids.has(candidate.toLowerCase()));
+  return candidate;
 }
 
 function renderCharacterView() {
