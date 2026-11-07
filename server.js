@@ -11,6 +11,7 @@ const PUBLIC_DIR = path.join(ROOT, 'public');
 const STORE_DIR = path.join(ROOT, 'store');
 const PROMPT_SETTINGS_FILE = path.join(STORE_DIR, 'prompt-settings.json');
 const GENERATED_PREFERENCES_FILE = path.join(STORE_DIR, 'generated-preferences.json');
+const GENERATED_METADATA_FILE = path.join(STORE_DIR, 'generated-metadata.json');
 const CATALOG_METADATA_FILE = path.join(STORE_DIR, 'catalog-metadata.json');
 const PORT = Number(process.env.PORT || 3000);
 
@@ -123,6 +124,58 @@ function writeGeneratedPreferences(preferences) {
   try {
     fs.writeFileSync(temporaryFile, JSON.stringify(preferences, null, 2), 'utf8');
     fs.renameSync(temporaryFile, GENERATED_PREFERENCES_FILE);
+  } finally {
+    if (fs.existsSync(temporaryFile)) fs.unlinkSync(temporaryFile);
+  }
+}
+
+function validateGeneratedMetadata(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid generated image metadata');
+  }
+  const metadata = {};
+  for (const [characterId, clothes] of Object.entries(value)) {
+    if (!SAFE_ID.test(characterId) || !clothes || typeof clothes !== 'object' || Array.isArray(clothes)) {
+      throw new Error('Invalid generated image metadata');
+    }
+    metadata[characterId] = {};
+    for (const [dressId, images] of Object.entries(clothes)) {
+      if (!SAFE_ID.test(dressId) || !images || typeof images !== 'object' || Array.isArray(images)) {
+        throw new Error('Invalid generated image metadata');
+      }
+      metadata[characterId][dressId] = {};
+      for (const [file, settings] of Object.entries(images)) {
+        if (path.basename(file) !== file || !isImage(file)
+          || !settings || typeof settings !== 'object' || Array.isArray(settings)
+          || typeof settings.prompt !== 'string' || settings.prompt.length > 10000
+          || !(settings.seed === null || (Number.isSafeInteger(settings.seed) && settings.seed >= 0))
+          || !(settings.disableLora === undefined || settings.disableLora === null
+            || typeof settings.disableLora === 'boolean')) {
+          throw new Error('Invalid generated image metadata');
+        }
+        metadata[characterId][dressId][file] = {
+          prompt: settings.prompt,
+          seed: settings.seed,
+          disableLora: settings.disableLora ?? null,
+        };
+      }
+    }
+  }
+  return metadata;
+}
+
+function readGeneratedMetadata() {
+  if (!fs.existsSync(GENERATED_METADATA_FILE)) return {};
+  return validateGeneratedMetadata(JSON.parse(fs.readFileSync(GENERATED_METADATA_FILE, 'utf8')));
+}
+
+function writeGeneratedMetadata(metadata) {
+  const validated = validateGeneratedMetadata(metadata);
+  fs.mkdirSync(STORE_DIR, { recursive: true });
+  const temporaryFile = `${GENERATED_METADATA_FILE}.${randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(temporaryFile, JSON.stringify(validated, null, 2), 'utf8');
+    fs.renameSync(temporaryFile, GENERATED_METADATA_FILE);
   } finally {
     if (fs.existsSync(temporaryFile)) fs.unlinkSync(temporaryFile);
   }
@@ -361,13 +414,35 @@ function handleDeleteGeneratedImage(res, body) {
   }
 
   const preferences = readGeneratedPreferences();
+  const metadata = readGeneratedMetadata();
   fs.unlinkSync(path.join(STORE_DIR, 'generated', request.character, request.file));
   if (preferences[request.character]?.[request.dress] === request.file) {
     delete preferences[request.character][request.dress];
     if (!Object.keys(preferences[request.character]).length) delete preferences[request.character];
     writeGeneratedPreferences(preferences);
   }
+  const imageMetadata = metadata[request.character]?.[request.dress];
+  if (imageMetadata?.[request.file]) {
+    delete imageMetadata[request.file];
+    if (!Object.keys(imageMetadata).length) delete metadata[request.character][request.dress];
+    if (!Object.keys(metadata[request.character]).length) delete metadata[request.character];
+    writeGeneratedMetadata(metadata);
+  }
   return json(res, 200, { character: request.character, dress: request.dress, file: request.file });
+}
+
+function handleGetGeneratedSettings(res, query) {
+  const request = validateGeneratedImageRequest({
+    character: query.get('character'),
+    dress: query.get('dress'),
+    file: query.get('file'),
+  });
+  if (request.error) return json(res, 400, { error: request.error });
+  if (!findGeneratedImage(request.character, request.dress, request.file)) {
+    return json(res, 404, { error: 'generated image not found' });
+  }
+  const settings = readGeneratedMetadata()[request.character]?.[request.dress]?.[request.file];
+  return json(res, 200, settings ?? { prompt: null, seed: null, disableLora: null });
 }
 
 // ---------------------------------------------------------------------------
@@ -410,11 +485,14 @@ async function handleGenerate(res, body) {
   if (existing) {
     return json(res, 200, {
       status: 'existing',
+      file: existing.file,
       url: `/store/generated/${character}/${encodeURIComponent(existing.file)}`,
       createdAt: existing.createdAt,
     });
   }
 
+  const actualPrompt = prompt ?? getDefaultPrompt();
+  const actualSeed = seed ?? getDefaultSeed();
   fs.mkdirSync(generatedDir, { recursive: true });
   const result = await generateImage({
     characterFile: characterImage.filePath,
@@ -423,21 +501,32 @@ async function handleGenerate(res, body) {
     characterId: character,
     dressId: dress,
     outputStem: `${dress}__${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`,
-    prompt: prompt ?? getDefaultPrompt(),
-    seed,
+    prompt: actualPrompt,
+    seed: actualSeed ?? undefined,
     force,
     disableLora,
   });
 
+  const generatedMetadata = readGeneratedMetadata();
+  generatedMetadata[character] ??= {};
+  generatedMetadata[character][dress] ??= {};
+  generatedMetadata[character][dress][result.file] = {
+    prompt: actualPrompt,
+    seed: actualSeed,
+    disableLora: disableLora ?? false,
+  };
+  writeGeneratedMetadata(generatedMetadata);
+
   const promptSettings = readPromptSettings();
   promptSettings.clothes[dress] ??= { source: 'shared' };
-  promptSettings.clothes[dress].lastPrompt = prompt ?? getDefaultPrompt();
+  promptSettings.clothes[dress].lastPrompt = actualPrompt;
   writePromptSettings(promptSettings);
 
   const createdAt = fs.statSync(path.join(generatedDir, result.file)).mtime.toISOString();
   return json(res, 200, {
     status: 'generated',
     mock: Boolean(result.mock),
+    file: result.file,
     url: `/store/generated/${character}/${encodeURIComponent(result.file)}`,
     createdAt,
   });
@@ -742,6 +831,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname === '/api/generated-selection' && req.method === 'PUT') {
       return handleGeneratedSelection(res, await readBody(req));
+    }
+    if (pathname === '/api/generated-settings' && req.method === 'GET') {
+      return handleGetGeneratedSettings(res, url.searchParams);
     }
     if (pathname === '/api/generated-image' && req.method === 'DELETE') {
       return handleDeleteGeneratedImage(res, await readBody(req));

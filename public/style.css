@@ -398,6 +398,29 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   background: transparent;
 }
 .image-manager-status { min-height: 1em; margin: 8px 0 0; font-size: 13px; }
+.generation-settings-dialog {
+  width: min(620px, calc(100vw - 32px));
+  max-height: min(80svh, 720px);
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+}
+.generation-settings-dialog::backdrop { background: rgb(0 0 0 / 55%); }
+.generation-settings-form { display: grid; gap: 10px; }
+.generation-settings-form h3, .generation-settings-form p { margin: 0; }
+.generation-settings-form textarea {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+  background: var(--field-bg);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+.generation-settings-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .advanced-settings {
   margin: 12px 0;
   border-top: 1px solid var(--border);

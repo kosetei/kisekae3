@@ -11,6 +11,7 @@ const state = {
   selectedGenerated: {},  // selected generated image URL per dress
   imageManagerOpen: false,
   imageActionBusy: false,
+  generationSettings: null,
   stageImageRequest: 0,
   stageCharacter: null,
   stageDisplayedSrc: null,
@@ -507,9 +508,10 @@ function renderCharacterView() {
                   <span>${esc(versionLabel(version, index))}</span>
                 </div>
                 <div class="generated-image-actions">
-                  <button type="button" data-primary-image="${esc(version.file)}" ${version.primary || state.imageActionBusy ? 'disabled' : ''}>
-                    ${version.primary ? '第一選択中' : '第一選択にする'}
+                  <button type="button" data-primary-image="${esc(version.file)}" aria-label="${version.primary ? 'サムネに設定済み' : 'この画像をサムネにする'}" ${version.primary || state.imageActionBusy ? 'disabled' : ''}>
+                    サムネ
                   </button>
+                  <button type="button" data-generation-settings="${esc(version.file)}">設定を見る</button>
                   <button type="button" class="danger-button" data-delete-image="${esc(version.file)}" ${state.imageActionBusy ? 'disabled' : ''}>削除</button>
                 </div>
               </article>`).join('')}
@@ -517,6 +519,22 @@ function renderCharacterView() {
           <p id="image-manager-status" class="image-manager-status" role="status">${esc(state.status)}</p>
         </div>
       </details>` : ''}
+
+    ${sel ? `
+      <dialog id="generation-settings-dialog" class="generation-settings-dialog" aria-labelledby="generation-settings-title">
+        <form method="dialog" class="generation-settings-form">
+          <h3 id="generation-settings-title">生成時の設定</h3>
+          <label for="generation-settings-prompt">プロンプト</label>
+          <textarea id="generation-settings-prompt" rows="8" readonly></textarea>
+          <p>シード: <span id="generation-settings-seed">読み込み中…</span></p>
+          <p>LoRA: <span id="generation-settings-lora">読み込み中…</span></p>
+          <p id="generation-settings-status" class="upload-status" role="status">読み込み中…</p>
+          <div class="generation-settings-actions">
+            <button id="apply-generation-settings" type="button" disabled>入力欄に適用</button>
+            <button type="submit">閉じる</button>
+          </div>
+        </form>
+      </dialog>` : ''}
 
     <details class="advanced-settings" ${state.advancedOpen ? 'open' : ''}>
       <summary>生成設定・その他</summary>
@@ -633,6 +651,13 @@ function renderCharacterView() {
   app.querySelectorAll('[data-primary-image]').forEach((button) => {
     button.addEventListener('click', () => setPrimaryImage(button.dataset.primaryImage));
   });
+  app.querySelectorAll('[data-generation-settings]').forEach((button) => {
+    button.addEventListener('click', () => showGenerationSettings(button.dataset.generationSettings));
+  });
+  const generationSettingsDialog = document.getElementById('generation-settings-dialog');
+  if (generationSettingsDialog) {
+    document.getElementById('apply-generation-settings').addEventListener('click', applyGenerationSettings);
+  }
   app.querySelectorAll('[data-delete-image]').forEach((button) => {
     button.addEventListener('click', () => deleteGeneratedImage(button.dataset.deleteImage));
   });
@@ -863,6 +888,57 @@ async function setPrimaryImage(file) {
   }
 }
 
+async function showGenerationSettings(file) {
+  const dialog = document.getElementById('generation-settings-dialog');
+  if (!dialog) return;
+  const prompt = document.getElementById('generation-settings-prompt');
+  const seed = document.getElementById('generation-settings-seed');
+  const lora = document.getElementById('generation-settings-lora');
+  const status = document.getElementById('generation-settings-status');
+  const applyButton = document.getElementById('apply-generation-settings');
+  state.generationSettings = null;
+  prompt.value = '';
+  seed.textContent = '読み込み中…';
+  lora.textContent = '読み込み中…';
+  status.textContent = '読み込み中…';
+  applyButton.disabled = true;
+  if (!dialog.open) dialog.showModal();
+
+  const query = new URLSearchParams({
+    character: state.currentCharacter,
+    dress: state.selectedDress,
+    file,
+  });
+  try {
+    const settings = await api(`/api/generated-settings?${query}`);
+    state.generationSettings = settings;
+    prompt.value = settings.prompt ?? '';
+    seed.textContent = settings.seed === null ? '記録なし' : String(settings.seed);
+    lora.textContent = typeof settings.disableLora === 'boolean'
+      ? settings.disableLora ? '使わない' : '使う'
+      : '記録なし';
+    const hasSettings = settings.prompt !== null || settings.seed !== null
+      || typeof settings.disableLora === 'boolean';
+    status.textContent = hasSettings ? '' : 'この画像の生成設定は保存されていません。';
+    applyButton.disabled = !hasSettings;
+  } catch (error) {
+    seed.textContent = '取得できませんでした';
+    lora.textContent = '取得できませんでした';
+    status.textContent = `設定の取得失敗: ${error.message}`;
+  }
+}
+
+function applyGenerationSettings() {
+  const settings = state.generationSettings;
+  if (!settings) return;
+  if (typeof settings.prompt === 'string') state.prompt = settings.prompt;
+  if (Number.isSafeInteger(settings.seed)) state.seed = settings.seed;
+  if (typeof settings.disableLora === 'boolean') state.disableLora = settings.disableLora;
+  state.advancedOpen = true;
+  document.getElementById('generation-settings-dialog')?.close();
+  renderCharacterView();
+}
+
 async function deleteGeneratedImage(file) {
   if (state.imageActionBusy) return;
   if (!window.confirm('この生成画像を削除します。この操作は取り消せません。よろしいですか？')) return;
@@ -1024,7 +1100,7 @@ async function generate(char, dressId, force = false) {
     });
     if (!generatedVersions(char, dressId).some((version) => version.url === res.url)) {
       char.generated[dressId] = [
-        { url: res.url, createdAt: res.createdAt },
+        { file: res.file, url: res.url, createdAt: res.createdAt },
         ...generatedVersions(char, dressId),
       ];
     }
