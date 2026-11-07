@@ -10,7 +10,7 @@ const state = {
   randomCharacterIds: [],
   characterThumbnailFit: localStorage.getItem('kisekae3-character-thumbnail-fit') === 'cover' ? 'cover' : 'contain',
   organizerFolders: { character: '', clothes: '' },
-  organizerOpen: { character: true, clothes: true },
+  organizerOpen: { character: false, clothes: true },
   dressFolder: '',
   currentCharacter: null, // char id when on character view
   selectedDress: null,    // dress id on character view
