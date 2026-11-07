@@ -227,7 +227,7 @@ function writePromptSettings(settings) {
 // ---------------------------------------------------------------------------
 
 async function handleGenerate(res, body) {
-  const { character, dress, prompt, seed, force } = body ?? {};
+  const { character, dress, prompt, seed, force, disableLora } = body ?? {};
   if (!SAFE_ID.test(character ?? '') || !SAFE_ID.test(dress ?? '')) {
     return json(res, 400, { error: 'character/dress id must be alphanumeric' });
   }
@@ -236,6 +236,9 @@ async function handleGenerate(res, body) {
   }
   if (force !== undefined && typeof force !== 'boolean') {
     return json(res, 400, { error: 'force must be a boolean' });
+  }
+  if (disableLora !== undefined && typeof disableLora !== 'boolean') {
+    return json(res, 400, { error: 'disableLora must be a boolean' });
   }
   if (seed !== undefined && (!Number.isSafeInteger(seed) || seed < 0)) {
     return json(res, 400, { error: 'seed must be a non-negative safe integer' });
@@ -271,6 +274,7 @@ async function handleGenerate(res, body) {
     prompt: prompt ?? getDefaultPrompt(),
     seed,
     force,
+    disableLora,
   });
 
   const promptSettings = readPromptSettings();

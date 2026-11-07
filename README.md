@@ -47,7 +47,7 @@ API:
 - `GET /api/config` — ワークフローJSONに設定された既定プロンプト
 - `GET /api/prompt-settings` / `PUT /api/prompt-settings` — プロンプトプリセットと服ごとの設定（`store/prompt-settings.json` に保存）
 - `POST /api/upload {type, id, image}` — キャラまたは服画像を追加（`image` はBase64 data URL）
-- `POST /api/generate {character, dress, prompt, seed, force}` — 既存なら `{status:"existing"}`, なければ生成。`seed` は省略可能な0以上の安全な整数。`force: true` は既存結果を残したまま新しいバージョンを生成
+- `POST /api/generate {character, dress, prompt, seed, force, disableLora}` — 既存なら `{status:"existing"}`, なければ生成。`seed` は省略可能な0以上の安全な整数。`force: true` は既存結果を残したまま新しいバージョンを生成。`disableLora: true` はワークフロー内のLoRAローダーをバイパスして生成（省略時はワークフロー設定どおり）
 
 ## ComfyUI
 

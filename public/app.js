@@ -13,6 +13,7 @@ const state = {
   defaultPrompt: '',
   promptSettings: { presets: [], clothes: {} },
   seed: 0,
+  disableLora: false,
   status: '',
   advancedOpen: false,
   routeHash: '',
@@ -261,6 +262,13 @@ function renderCharacterView() {
             <button id="randomize-seed" type="button">ランダム</button>
           </div>
         </section>
+        <section class="lora-settings">
+          <span class="lora-label">LoRA</span>
+          <div class="lora-controls" role="group" aria-label="LoRA設定">
+            <button id="lora-use" class="lora-choice" type="button" aria-pressed="${!state.disableLora}">使う</button>
+            <button id="lora-disable" class="lora-choice" type="button" aria-pressed="${state.disableLora}">使わない</button>
+          </div>
+        </section>
         <section class="prompt-settings">
           <label for="prompt">生成プロンプト</label>
           <textarea id="prompt" rows="5">${esc(state.prompt)}</textarea>
@@ -316,6 +324,20 @@ function renderCharacterView() {
   document.getElementById('delete-preset').addEventListener('click', deletePromptPreset);
   document.getElementById('seed').addEventListener('input', (event) => {
     state.seed = event.target.value;
+  });
+  const loraUseButton = document.getElementById('lora-use');
+  const loraDisableButton = document.getElementById('lora-disable');
+  const updateLoraButtons = () => {
+    loraUseButton.setAttribute('aria-pressed', String(!state.disableLora));
+    loraDisableButton.setAttribute('aria-pressed', String(state.disableLora));
+  };
+  loraUseButton.addEventListener('click', () => {
+    state.disableLora = false;
+    updateLoraButtons();
+  });
+  loraDisableButton.addEventListener('click', () => {
+    state.disableLora = true;
+    updateLoraButtons();
   });
   document.getElementById('randomize-seed').addEventListener('click', () => {
     const values = new Uint32Array(2);
@@ -528,6 +550,7 @@ async function generate(char, dressId, force = false) {
         prompt: state.prompt,
         seed,
         force,
+        disableLora: state.disableLora,
       }),
     });
     if (!generatedVersions(char, dressId).some((version) => version.url === res.url)) {

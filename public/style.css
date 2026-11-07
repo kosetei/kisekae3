@@ -130,12 +130,19 @@ button.card { cursor: pointer; font: inherit; text-align: left; }
 .catalog-clothes { margin-top: 8px; border-top: 1px solid var(--border); }
 
 .stage { margin-bottom: 20px; }
-.prompt-settings, .seed-settings {
+.prompt-settings, .seed-settings, .lora-settings {
   margin: 20px 0;
   padding: 14px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
+}
+.lora-settings { display: flex; align-items: center; gap: 12px; }
+.lora-label { font-weight: 600; }
+.lora-controls { display: flex; gap: 8px; }
+.lora-choice[aria-pressed="true"] {
+  background: var(--button-text);
+  color: var(--surface);
 }
 .seed-settings label { display: block; margin-bottom: 8px; font-weight: 600; }
 .seed-controls { display: flex; gap: 8px; }
