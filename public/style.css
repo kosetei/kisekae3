@@ -251,11 +251,14 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .dresses { min-width: 0; }
 .dresses h3 { margin: 0 0 6px; }
 .dress-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
-  gap: 4px;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 2px;
+  overscroll-behavior-x: contain;
 }
 .card.dress {
+  flex: 0 0 72px;
   min-width: 0;
   padding: 3px;
   border-radius: 6px;
@@ -341,14 +344,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .stage-image img { max-height: 78svh; }
   .dresses { padding: 0 6px; }
   .dresses h3 { padding: 0 2px; }
-  .dress-grid {
-    display: flex;
-    gap: 6px;
-    overflow-x: auto;
-    padding: 2px;
-    overscroll-behavior-x: contain;
-  }
-  .card.dress { flex: 0 0 72px; }
   .advanced-settings { margin: 12px 8px; }
 }
 
@@ -377,7 +372,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
     object-fit: contain;
   }
   .dresses { max-height: calc(100dvh - 140px); overflow-y: auto; }
-  .dress-grid { grid-template-columns: repeat(auto-fill, minmax(82px, 1fr)); }
+  .dress-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(82px, 1fr));
+    overflow: visible;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
