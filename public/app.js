@@ -5,6 +5,8 @@ const state = {
   currentCharacter: null, // char id when on character view
   selectedDress: null,    // dress id on character view
   selectedGenerated: {},  // selected generated image URL per dress
+  imageManagerOpen: false,
+  imageActionBusy: false,
   stageImageRequest: 0,
   busy: false,
   uploading: false,
@@ -193,6 +195,7 @@ function renderCharacterView() {
   const selUrl = selected?.url || null;
   const displaySrc = selUrl || char.iconUrl;
   const missing = state.catalog.clothes.filter((d) => !generatedVersions(char, d.id).length);
+  const generatedTotal = versions.length;
   const stageImages = document.querySelectorAll('#stage img');
   const previousSrc = stageImages.length
     ? stageImages[stageImages.length - 1].getAttribute('src')
@@ -237,6 +240,30 @@ function renderCharacterView() {
         </div>
       </section>
     </div>
+
+    ${sel ? `
+      <details class="image-manager" ${state.imageManagerOpen ? 'open' : ''}>
+        <summary>生成画像を整理 (${generatedTotal})</summary>
+        <div class="image-manager-content">
+          ${generatedTotal ? `<div class="generated-image-grid">
+            ${versions.map((version, index) => `
+              <article class="generated-image-card ${version.primary ? 'primary' : ''}">
+                <img src="${version.url}" alt="${esc(sel)} ${esc(versionLabel(version, index))}" loading="lazy" />
+                <div class="generated-image-meta">
+                  ${version.primary ? '<span class="primary-badge">第一選択</span>' : ''}
+                  <span>${esc(versionLabel(version, index))}</span>
+                </div>
+                <div class="generated-image-actions">
+                  <button type="button" data-primary-image="${esc(version.file)}" ${version.primary || state.imageActionBusy ? 'disabled' : ''}>
+                    ${version.primary ? '第一選択中' : '第一選択にする'}
+                  </button>
+                  <button type="button" class="danger-button" data-delete-image="${esc(version.file)}" ${state.imageActionBusy ? 'disabled' : ''}>削除</button>
+                </div>
+              </article>`).join('')}
+          </div>` : '<p class="empty">この服の生成画像はまだありません。</p>'}
+          <p id="image-manager-status" class="image-manager-status" role="status">${esc(state.status)}</p>
+        </div>
+      </details>` : ''}
 
     <details class="advanced-settings" ${state.advancedOpen ? 'open' : ''}>
       <summary>生成設定・その他</summary>
@@ -304,6 +331,18 @@ function renderCharacterView() {
   const advancedSettings = app.querySelector('.advanced-settings');
   advancedSettings.addEventListener('toggle', () => {
     state.advancedOpen = advancedSettings.open;
+  });
+  const imageManager = app.querySelector('.image-manager');
+  if (imageManager) {
+    imageManager.addEventListener('toggle', () => {
+      state.imageManagerOpen = imageManager.open;
+    });
+  }
+  app.querySelectorAll('[data-primary-image]').forEach((button) => {
+    button.addEventListener('click', () => setPrimaryImage(button.dataset.primaryImage));
+  });
+  app.querySelectorAll('[data-delete-image]').forEach((button) => {
+    button.addEventListener('click', () => deleteGeneratedImage(button.dataset.deleteImage));
   });
   app.querySelectorAll('button.dress').forEach((btn) => {
     btn.addEventListener('click', () => selectDress(btn.dataset.dress));
@@ -397,6 +436,7 @@ async function selectDress(dressId) {
     renderCharacterView();
     return;
   }
+  if (dressId !== state.selectedDress) state.imageManagerOpen = false;
   state.selectedDress = dressId;
   const settings = promptSettingsForDress(dressId);
   if (settings.source === 'preset') {
@@ -417,6 +457,55 @@ async function selectDress(dressId) {
   }
   state.advancedOpen = true;
   renderCharacterView();
+}
+
+async function setPrimaryImage(file) {
+  if (state.imageActionBusy) return;
+  const character = state.currentCharacter;
+  const dress = state.selectedDress;
+  state.imageActionBusy = true;
+  setStatus('第一選択を保存中…');
+  renderCharacterView();
+  try {
+    await api('/api/generated-selection', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ character, dress, file }),
+    });
+    await refreshCatalog();
+    delete state.selectedGenerated[dress];
+    setStatus('第一選択を保存しました');
+  } catch (error) {
+    setStatus(`第一選択の保存失敗: ${error.message}`);
+  } finally {
+    state.imageActionBusy = false;
+    renderCharacterView();
+  }
+}
+
+async function deleteGeneratedImage(file) {
+  if (state.imageActionBusy) return;
+  if (!window.confirm('この生成画像を削除します。この操作は取り消せません。よろしいですか？')) return;
+  const character = state.currentCharacter;
+  const dress = state.selectedDress;
+  state.imageActionBusy = true;
+  setStatus('画像を削除中…');
+  renderCharacterView();
+  try {
+    await api('/api/generated-image', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ character, dress, file }),
+    });
+    await refreshCatalog();
+    delete state.selectedGenerated[dress];
+    setStatus('画像を削除しました');
+  } catch (error) {
+    setStatus(`画像の削除失敗: ${error.message}`);
+  } finally {
+    state.imageActionBusy = false;
+    renderCharacterView();
+  }
 }
 
 async function changePromptSource(event) {
@@ -588,6 +677,8 @@ function setStatus(msg) {
   state.status = msg;
   const el = document.getElementById('status');
   if (el) el.textContent = msg;
+  const imageManagerStatus = document.getElementById('image-manager-status');
+  if (imageManagerStatus) imageManagerStatus.textContent = msg;
 }
 
 function readImageAsDataUrl(file) {

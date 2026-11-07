@@ -10,6 +10,7 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const STORE_DIR = path.join(ROOT, 'store');
 const PROMPT_SETTINGS_FILE = path.join(STORE_DIR, 'prompt-settings.json');
+const GENERATED_PREFERENCES_FILE = path.join(STORE_DIR, 'generated-preferences.json');
 const PORT = Number(process.env.PORT || 3000);
 
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg']);
@@ -95,10 +96,42 @@ function generatedFiles(generatedDir, dressId) {
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
+function readGeneratedPreferences() {
+  if (!fs.existsSync(GENERATED_PREFERENCES_FILE)) return {};
+  const preferences = JSON.parse(fs.readFileSync(GENERATED_PREFERENCES_FILE, 'utf8'));
+  if (!preferences || typeof preferences !== 'object' || Array.isArray(preferences)) {
+    throw new Error('Invalid generated image preferences');
+  }
+  for (const [characterId, clothes] of Object.entries(preferences)) {
+    if (!SAFE_ID.test(characterId) || !clothes || typeof clothes !== 'object' || Array.isArray(clothes)) {
+      throw new Error('Invalid generated image preferences');
+    }
+    for (const [dressId, file] of Object.entries(clothes)) {
+      if (!SAFE_ID.test(dressId) || typeof file !== 'string' || path.basename(file) !== file
+        || !isImage(file)) {
+        throw new Error('Invalid generated image preferences');
+      }
+    }
+  }
+  return preferences;
+}
+
+function writeGeneratedPreferences(preferences) {
+  fs.mkdirSync(STORE_DIR, { recursive: true });
+  const temporaryFile = `${GENERATED_PREFERENCES_FILE}.${randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(temporaryFile, JSON.stringify(preferences, null, 2), 'utf8');
+    fs.renameSync(temporaryFile, GENERATED_PREFERENCES_FILE);
+  } finally {
+    if (fs.existsSync(temporaryFile)) fs.unlinkSync(temporaryFile);
+  }
+}
+
 function scanCatalog() {
   const clothesDir = path.join(STORE_DIR, 'clothes');
   const charactersDir = path.join(STORE_DIR, 'characters');
   const generatedDir = path.join(STORE_DIR, 'generated');
+  const generatedPreferences = readGeneratedPreferences();
 
   const clothes = [];
   if (fs.existsSync(clothesDir)) {
@@ -127,10 +160,15 @@ function scanCatalog() {
       const gdir = path.join(generatedDir, id);
       const generated = {};
       for (const dress of clothes) {
-        generated[dress.id] = generatedFiles(gdir, dress.id).map(({ file, createdAt }) => ({
-          url: `/store/generated/${id}/${encodeURIComponent(file)}`,
-          createdAt,
-        }));
+        const primaryFile = generatedPreferences[id]?.[dress.id];
+        generated[dress.id] = generatedFiles(gdir, dress.id)
+          .sort((a, b) => Number(b.file === primaryFile) - Number(a.file === primaryFile))
+          .map(({ file, createdAt }) => ({
+            file,
+            url: `/store/generated/${id}/${encodeURIComponent(file)}`,
+            createdAt,
+            primary: file === primaryFile,
+          }));
       }
 
       characters.push({
@@ -222,6 +260,54 @@ function writePromptSettings(settings) {
   return validated;
 }
 
+function findGeneratedImage(character, dress, file) {
+  const generatedDir = path.join(STORE_DIR, 'generated', character);
+  if (typeof file !== 'string' || path.basename(file) !== file) return null;
+  return generatedFiles(generatedDir, dress).find((image) => image.file === file) ?? null;
+}
+
+function validateGeneratedImageRequest(body) {
+  const { character, dress, file } = body ?? {};
+  if (!SAFE_ID.test(character ?? '') || !SAFE_ID.test(dress ?? '')) {
+    return { error: 'character/dress id must be alphanumeric' };
+  }
+  if (typeof file !== 'string' || path.basename(file) !== file) {
+    return { error: 'file must be a generated image filename' };
+  }
+  return { character, dress, file };
+}
+
+function handleGeneratedSelection(res, body) {
+  const request = validateGeneratedImageRequest(body);
+  if (request.error) return json(res, 400, { error: request.error });
+  if (!findGeneratedImage(request.character, request.dress, request.file)) {
+    return json(res, 404, { error: 'generated image not found' });
+  }
+
+  const preferences = readGeneratedPreferences();
+  preferences[request.character] ??= {};
+  preferences[request.character][request.dress] = request.file;
+  writeGeneratedPreferences(preferences);
+  return json(res, 200, { character: request.character, dress: request.dress, file: request.file });
+}
+
+function handleDeleteGeneratedImage(res, body) {
+  const request = validateGeneratedImageRequest(body);
+  if (request.error) return json(res, 400, { error: request.error });
+  if (!findGeneratedImage(request.character, request.dress, request.file)) {
+    return json(res, 404, { error: 'generated image not found' });
+  }
+
+  const preferences = readGeneratedPreferences();
+  fs.unlinkSync(path.join(STORE_DIR, 'generated', request.character, request.file));
+  if (preferences[request.character]?.[request.dress] === request.file) {
+    delete preferences[request.character][request.dress];
+    if (!Object.keys(preferences[request.character]).length) delete preferences[request.character];
+    writeGeneratedPreferences(preferences);
+  }
+  return json(res, 200, { character: request.character, dress: request.dress, file: request.file });
+}
+
 // ---------------------------------------------------------------------------
 // Generate endpoint: existing file -> serve it; force -> save a new version.
 // ---------------------------------------------------------------------------
@@ -254,7 +340,11 @@ async function handleGenerate(res, body) {
   const dressFile = fs.readdirSync(clothesDir).find((f) => isImage(f) && path.basename(f, path.extname(f)) === dress);
   if (!dressFile) return json(res, 404, { error: `dress not found: ${dress}` });
 
-  const existing = !force ? generatedFiles(generatedDir, dress)[0] : null;
+  const versions = generatedFiles(generatedDir, dress);
+  const preferredFile = readGeneratedPreferences()[character]?.[dress];
+  const existing = !force
+    ? versions.find((version) => version.file === preferredFile) ?? versions[0] ?? null
+    : null;
   if (existing) {
     return json(res, 200, {
       status: 'existing',
@@ -407,6 +497,12 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname === '/api/generate' && req.method === 'POST') {
       return await handleGenerate(res, await readBody(req));
+    }
+    if (pathname === '/api/generated-selection' && req.method === 'PUT') {
+      return handleGeneratedSelection(res, await readBody(req));
+    }
+    if (pathname === '/api/generated-image' && req.method === 'DELETE') {
+      return handleDeleteGeneratedImage(res, await readBody(req));
     }
     if (pathname === '/api/upload' && req.method === 'POST') {
       return handleUpload(res, await readBody(req));

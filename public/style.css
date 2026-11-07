@@ -270,6 +270,50 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .card.dress .meta { margin-top: 3px; font-size: 11px; }
 .card.dress .meta strong { margin-bottom: 1px; overflow-wrap: anywhere; }
 .card.dress.selected { outline-width: 2px; }
+.image-manager {
+  margin: 12px 0;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+}
+.image-manager summary { padding: 10px 0; cursor: pointer; }
+.image-manager-content { padding-bottom: 12px; }
+.generated-image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px;
+}
+.generated-image-card {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.generated-image-card.primary { border-color: var(--link); }
+.generated-image-card > img {
+  display: block;
+  width: 100%;
+  height: 190px;
+  object-fit: contain;
+  border-radius: 4px;
+  background: var(--surface-muted);
+}
+.generated-image-meta {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.primary-badge { color: var(--success); font-weight: 700; }
+.generated-image-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.generated-image-actions button { padding: 6px 8px; font-size: 12px; }
+.generated-image-actions .danger-button {
+  border-color: var(--error);
+  color: var(--error);
+  background: transparent;
+}
+.image-manager-status { min-height: 1em; margin: 8px 0 0; font-size: 13px; }
 .advanced-settings {
   margin: 12px 0;
   border-top: 1px solid var(--border);
