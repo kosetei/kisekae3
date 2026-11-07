@@ -178,10 +178,9 @@ function renderCharacterList() {
   state.characterPage = Math.min(state.characterPage, Math.max(pageCount, 1));
   const pageCharacters = sortedCharacters.slice((state.characterPage - 1) * 30, state.characterPage * 30);
   const cards = pageCharacters.map((c) => `
-    <a class="card character-card ${state.characterThumbnailFit === 'contain' ? 'fit-contain' : ''}" href="#/char/${esc(c.id)}">
-      ${c.iconUrl ? `<img src="${c.iconUrl}" alt="${esc(c.name)}" loading="lazy" />` : '<div class="noimg">No icon</div>'}
+    <a class="card character-card ${state.characterThumbnailFit === 'contain' ? 'fit-contain' : ''}" href="#/char/${esc(c.id)}" aria-label="${esc(c.name)}">
+      ${c.iconUrl ? `<img src="${c.iconUrl}" alt="" loading="lazy" />` : '<div class="noimg">No icon</div>'}
       <div class="meta">
-        <strong>${esc(c.name)}</strong>
         <span class="count">${generatedCount(c)} / ${state.catalog.clothes.length} 生成済み</span>
       </div>
     </a>`).join('');
@@ -569,17 +568,16 @@ function renderCharacterView() {
           : `<div class="dress-grid">${visibleDresses.map((d) => {
             const done = generatedVersions(char, d.id).length > 0;
             return `
-            <button class="card small dress ${d.id === sel ? 'selected' : ''}" data-dress="${esc(d.id)}">
-              <img src="${d.url}" alt="${esc(d.name)}" loading="lazy" />
+            <button class="card small dress ${d.id === sel ? 'selected' : ''}" data-dress="${esc(d.id)}" aria-label="${esc(d.name)}">
+              <img src="${d.url}" alt="" loading="lazy" />
               <div class="meta">
-                <strong>${esc(d.name)}</strong>
                 <span class="badge ${done ? 'done' : 'todo'}">${done ? '生成済み' : '未生成'}</span>
               </div>
             </button>`;
           }).join('')}</div>`}
         <div class="dress-folder-picker">${renderFolderPicker(dressFolders, state.dressFolder, 'dress')}</div>
         ${sel ? `<p class="stage-caption">
-          選択中: ${esc(selectedDressName)} — ${selUrl ? `生成済み (${versions.length}件)` : '未生成'}
+          選択中の服: ${selUrl ? `生成済み (${versions.length}件)` : '未生成'}
         </p>` : ''}
       </section>
     </div>
