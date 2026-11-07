@@ -4,6 +4,11 @@ const state = {
   catalog: null,
   selectedCatalogItems: { character: new Set(), clothes: new Set() },
   catalogFolders: { characters: '', clothes: '' },
+  characterSort: 'generated',
+  characterPage: 1,
+  randomFolderActive: false,
+  randomCharacterIds: [],
+  characterThumbnailFit: localStorage.getItem('kisekae3-character-thumbnail-fit') === 'cover' ? 'cover' : 'contain',
   organizerFolders: { character: '', clothes: '' },
   dressFolder: '',
   currentCharacter: null, // char id when on character view
@@ -78,6 +83,22 @@ function generatedCount(char) {
   return Object.values(char.generated).filter((versions) => versions.length > 0).length;
 }
 
+function latestGeneratedAt(char) {
+  return Object.values(char.generated).flat().reduce((latest, version) => {
+    const createdAt = Date.parse(version.createdAt);
+    return Number.isFinite(createdAt) ? Math.max(latest, createdAt) : latest;
+  }, 0);
+}
+
+function chooseRandomCharacters(characters, count) {
+  const shuffled = [...characters];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled.slice(0, count);
+}
+
 function generatedVersions(char, dressId) {
   return char.generated[dressId] || [];
 }
@@ -143,10 +164,21 @@ function renderCharacterList() {
   app.className = 'home-page';
   const characterFolders = groupedCatalogItems(state.catalog.characters, state.catalog.groups.characters);
   const clothesFolders = groupedCatalogItems(state.catalog.clothes, state.catalog.groups.clothes);
-  const visibleCharacters = characterFolders.find(([group]) => group === state.catalogFolders.characters)?.[1] || [];
+  const visibleCharacters = state.randomFolderActive
+    ? state.randomCharacterIds.map((id) => state.catalog.characters.find((character) => character.id === id)).filter(Boolean)
+    : characterFolders.find(([group]) => group === state.catalogFolders.characters)?.[1] || [];
   const visibleClothes = clothesFolders.find(([group]) => group === state.catalogFolders.clothes)?.[1] || [];
-  const cards = visibleCharacters.map((c) => `
-    <a class="card" href="#/char/${esc(c.id)}">
+  const sortedCharacters = [...visibleCharacters];
+  if (state.characterSort === 'generated') {
+    sortedCharacters.sort((a, b) => generatedCount(b) - generatedCount(a));
+  } else if (state.characterSort === 'recent') {
+    sortedCharacters.sort((a, b) => latestGeneratedAt(b) - latestGeneratedAt(a));
+  }
+  const pageCount = Math.ceil(sortedCharacters.length / 30);
+  state.characterPage = Math.min(state.characterPage, Math.max(pageCount, 1));
+  const pageCharacters = sortedCharacters.slice((state.characterPage - 1) * 30, state.characterPage * 30);
+  const cards = pageCharacters.map((c) => `
+    <a class="card character-card ${state.characterThumbnailFit === 'contain' ? 'fit-contain' : ''}" href="#/char/${esc(c.id)}">
       ${c.iconUrl ? `<img src="${c.iconUrl}" alt="${esc(c.name)}" loading="lazy" />` : '<div class="noimg">No icon</div>'}
       <div class="meta">
         <strong>${esc(c.name)}</strong>
@@ -155,13 +187,34 @@ function renderCharacterList() {
     </a>`).join('');
   const clothes = visibleClothes.map((d) => `
     <div class="card small"><img src="${d.url}" alt="${esc(d.name)}" loading="lazy" /><div class="meta"><strong>${esc(d.name)}</strong></div></div>`).join('');
+  const characterListControls = (state.randomFolderActive || state.catalogFolders.characters !== null) && visibleCharacters.length
+    ? `<div class="character-list-toolbar">
+        <label for="character-sort">並び替え</label>
+        <select id="character-sort">
+          <option value="default" ${state.characterSort === 'default' ? 'selected' : ''}>登録順</option>
+          <option value="generated" ${state.characterSort === 'generated' ? 'selected' : ''}>生成数が多い順</option>
+          <option value="recent" ${state.characterSort === 'recent' ? 'selected' : ''}>最近生成した順</option>
+        </select>
+        <label for="character-thumbnail-fit">サムネイル</label>
+        <select id="character-thumbnail-fit">
+          <option value="cover" ${state.characterThumbnailFit === 'cover' ? 'selected' : ''}>余白なし</option>
+          <option value="contain" ${state.characterThumbnailFit === 'contain' ? 'selected' : ''}>全体を表示</option>
+        </select>
+        <span class="character-list-count">${visibleCharacters.length}キャラ</span>
+      </div>
+      ${pageCount > 1 ? `<nav class="character-pagination" aria-label="キャラ一覧のページ">
+        <button type="button" data-character-page="${state.characterPage - 1}" ${state.characterPage === 1 ? 'disabled' : ''}>前へ</button>
+        <span>${state.characterPage} / ${pageCount}ページ</span>
+        <button type="button" data-character-page="${state.characterPage + 1}" ${state.characterPage === pageCount ? 'disabled' : ''}>次へ</button>
+      </nav>` : ''}`
+    : '';
   app.innerHTML = `
     <h2>キャラを選ぶ</h2>
     ${state.catalog.characters.length ? `
-      ${renderFolderPicker(characterFolders, state.catalogFolders.characters, 'characters')}
-      ${state.catalogFolders.characters === null
+      ${renderFolderPicker(characterFolders, state.catalogFolders.characters, 'characters', 'characters', true, state.randomFolderActive)}
+      ${!state.randomFolderActive && state.catalogFolders.characters === null
         ? '<p class="empty">フォルダを選ぶと中身が表示されます。</p>'
-        : cards ? `<div class="grid">${cards}</div>` : '<p class="empty">このフォルダにキャラはいません。</p>'}`
+        : visibleCharacters.length ? `${characterListControls}<div class="grid">${cards}</div>` : '<p class="empty">このフォルダにキャラはいません。</p>'}`
       : '<p class="empty">store/characters/ に chara1.png のような画像を追加してください。</p>'}
     <details class="upload-section">
       <summary>キャラ・服を追加</summary>
@@ -193,6 +246,22 @@ function renderCharacterList() {
       ${renderCatalogOrganizer('clothes', state.catalog.clothes, state.catalog.groups.clothes)}
     </details>`;
 
+  app.querySelector('#character-sort')?.addEventListener('change', (event) => {
+    state.characterSort = event.currentTarget.value;
+    state.characterPage = 1;
+    renderCharacterList();
+  });
+  app.querySelector('#character-thumbnail-fit')?.addEventListener('change', (event) => {
+    state.characterThumbnailFit = event.currentTarget.value;
+    localStorage.setItem('kisekae3-character-thumbnail-fit', state.characterThumbnailFit);
+    renderCharacterList();
+  });
+  app.querySelectorAll('[data-character-page]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.characterPage = Number(button.dataset.characterPage);
+      renderCharacterList();
+    });
+  });
   app.querySelectorAll('.upload-form').forEach((form) => {
     const fileInput = form.querySelector('[name="image"]');
     fileInput.addEventListener('change', () => {
@@ -244,23 +313,32 @@ function renderCharacterList() {
   });
 }
 
-function renderFolderPicker(folders, activeGroup, view, type = view) {
+function renderFolderPicker(folders, activeGroup, view, type = view, includeRandom = false, randomActive = false) {
   return `
     <nav class="catalog-folder-picker" aria-label="フォルダ">
       ${folders.map(([group, items]) => `
-        <button type="button" class="catalog-folder ${activeGroup === group ? 'active' : ''}"
+        <button type="button" class="catalog-folder ${!randomActive && activeGroup === group ? 'active' : ''}"
           data-folder-view="${view}" data-type="${type}" data-group="${esc(group)}"
           title="${esc(group || '未分類')} (${items.length})"
           aria-label="${esc(group || '未分類')}、${items.length}件"
-          aria-pressed="${activeGroup === group}">
+          aria-pressed="${!randomActive && activeGroup === group}">
           <span class="catalog-folder-icon" aria-hidden="true">📁</span>
           <span class="catalog-folder-label">${esc(group || '未分類')}</span>
         </button>`).join('')}
+      ${includeRandom ? `
+        <button type="button" class="catalog-folder ${randomActive ? 'active' : ''}"
+          data-folder-view="${view}" data-type="${type}" data-random-folder="true"
+          title="全キャラから${Math.min(6, state.catalog.characters.length)}人をランダムに選択"
+          aria-label="ランダム、全キャラから${Math.min(6, state.catalog.characters.length)}人を選択"
+          aria-pressed="${randomActive}">
+          <span class="catalog-folder-icon" aria-hidden="true">🎲</span>
+          <span class="catalog-folder-label">ランダム</span>
+        </button>` : ''}
     </nav>`;
 }
 
 function selectCatalogFolder(event) {
-  const { folderView, type, group } = event.currentTarget.dataset;
+  const { folderView, type, group, randomFolder } = event.currentTarget.dataset;
   if (folderView === 'organizer') {
     state.organizerFolders[type] = group;
     state.selectedCatalogItems[type].clear();
@@ -270,7 +348,18 @@ function selectCatalogFolder(event) {
     return;
   }
   if (folderView === 'characters' || folderView === 'clothes') {
+    if (folderView === 'characters' && randomFolder === 'true') {
+      state.randomFolderActive = true;
+      state.randomCharacterIds = chooseRandomCharacters(state.catalog.characters, 6).map((character) => character.id);
+      state.characterPage = 1;
+      renderCharacterList();
+      return;
+    }
     state.catalogFolders[folderView] = group;
+    if (folderView === 'characters') {
+      state.randomFolderActive = false;
+      state.characterPage = 1;
+    }
     renderCharacterList();
     if (folderView === 'clothes') {
       const clothesBrowser = app.querySelector('.clothes-browser');

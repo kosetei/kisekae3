@@ -67,6 +67,18 @@ h3 { margin: 0 0 10px; }
 a { color: var(--link); }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+.character-list-toolbar, .character-pagination {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+.character-list-toolbar label { font-size: 13px; font-weight: 600; }
+.character-list-count, .character-pagination span { color: var(--muted); font-size: 13px; }
+.character-list-count { margin-left: auto; }
+.character-pagination { justify-content: center; }
+.character-pagination button { padding: 6px 12px; }
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -84,6 +96,7 @@ button.card { cursor: pointer; font: inherit; text-align: left; }
   border-radius: 6px;
   background: var(--surface-muted);
 }
+.character-card.fit-contain img { object-fit: contain; }
 .grid.small { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
 .card.selected { outline: 3px solid var(--link); }
 .meta { margin-top: 8px; font-size: 13px; }
