@@ -157,6 +157,17 @@ button.card { cursor: pointer; font: inherit; text-align: left; }
   font: inherit;
   resize: vertical;
 }
+.prompt-settings > select { display: block; max-width: 100%; margin-top: 12px; }
+.prompt-preset-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.prompt-preset-actions label { flex-basis: 100%; margin: 0; }
+.prompt-preset-actions input {
+  min-width: 180px;
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+  font: inherit;
+}
 .prompt-settings .hint { margin-bottom: 0; }
 input, textarea, select { color: var(--text); background: var(--field-bg); }
 select { padding: 6px 8px; border: 1px solid var(--input-border); border-radius: 8px; }

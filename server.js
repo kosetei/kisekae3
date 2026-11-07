@@ -9,6 +9,7 @@ import { generateImage, getDefaultPrompt, getDefaultSeed } from './lib/generator
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const STORE_DIR = path.join(ROOT, 'store');
+const PROMPT_SETTINGS_FILE = path.join(STORE_DIR, 'prompt-settings.json');
 const PORT = Number(process.env.PORT || 3000);
 
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg']);
@@ -145,6 +146,82 @@ function scanCatalog() {
   return { clothes, characters };
 }
 
+function invalidPromptSettings(message) {
+  const error = new Error(message);
+  error.statusCode = 400;
+  return error;
+}
+
+function validatePromptSettings(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || !Array.isArray(value.presets) || !value.clothes || typeof value.clothes !== 'object'
+    || Array.isArray(value.clothes)) {
+    throw invalidPromptSettings('Invalid prompt settings');
+  }
+
+  const presetIds = new Set();
+  const presets = value.presets.map((preset) => {
+    if (!preset || typeof preset !== 'object' || typeof preset.id !== 'string' || !SAFE_ID.test(preset.id)
+      || presetIds.has(preset.id) || typeof preset.name !== 'string'
+      || !preset.name.trim() || preset.name.length > 100
+      || typeof preset.prompt !== 'string' || preset.prompt.length > 10000) {
+      throw invalidPromptSettings('Invalid prompt preset');
+    }
+    presetIds.add(preset.id);
+    return { id: preset.id, name: preset.name.trim(), prompt: preset.prompt };
+  });
+
+  const clothes = {};
+  for (const [dressId, settings] of Object.entries(value.clothes)) {
+    if (!SAFE_ID.test(dressId) || !settings || typeof settings !== 'object' || Array.isArray(settings)
+      || !['shared', 'default', 'saved', 'last', 'preset'].includes(settings.source ?? 'shared')) {
+      throw invalidPromptSettings(`Invalid prompt settings for clothes: ${dressId}`);
+    }
+    const source = settings.source ?? 'shared';
+    if (source === 'preset' && !presetIds.has(settings.presetId)) {
+      throw invalidPromptSettings(`Unknown prompt preset for clothes: ${dressId}`);
+    }
+    if (settings.lastPrompt !== undefined
+      && (typeof settings.lastPrompt !== 'string' || settings.lastPrompt.length > 10000)) {
+      throw invalidPromptSettings(`Invalid last prompt for clothes: ${dressId}`);
+    }
+    if (settings.savedPrompt !== undefined
+      && (typeof settings.savedPrompt !== 'string' || settings.savedPrompt.length > 10000)) {
+      throw invalidPromptSettings(`Invalid saved prompt for clothes: ${dressId}`);
+    }
+    clothes[dressId] = {
+      source,
+      ...(source === 'preset' ? { presetId: settings.presetId } : {}),
+      ...(settings.lastPrompt !== undefined ? { lastPrompt: settings.lastPrompt } : {}),
+      ...(settings.savedPrompt !== undefined ? { savedPrompt: settings.savedPrompt } : {}),
+    };
+  }
+  return { presets, clothes };
+}
+
+function readPromptSettings() {
+  if (!fs.existsSync(PROMPT_SETTINGS_FILE)) return { presets: [], clothes: {} };
+  try {
+    return validatePromptSettings(JSON.parse(fs.readFileSync(PROMPT_SETTINGS_FILE, 'utf8')));
+  } catch (error) {
+    error.statusCode = 500;
+    throw error;
+  }
+}
+
+function writePromptSettings(settings) {
+  const validated = validatePromptSettings(settings);
+  fs.mkdirSync(STORE_DIR, { recursive: true });
+  const temporaryFile = `${PROMPT_SETTINGS_FILE}.${randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(temporaryFile, JSON.stringify(validated, null, 2), 'utf8');
+    fs.renameSync(temporaryFile, PROMPT_SETTINGS_FILE);
+  } finally {
+    if (fs.existsSync(temporaryFile)) fs.unlinkSync(temporaryFile);
+  }
+  return validated;
+}
+
 // ---------------------------------------------------------------------------
 // Generate endpoint: existing file -> serve it; force -> save a new version.
 // ---------------------------------------------------------------------------
@@ -191,10 +268,15 @@ async function handleGenerate(res, body) {
     characterId: character,
     dressId: dress,
     outputStem: `${dress}__${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`,
-    prompt,
+    prompt: prompt ?? getDefaultPrompt(),
     seed,
     force,
   });
+
+  const promptSettings = readPromptSettings();
+  promptSettings.clothes[dress] ??= { source: 'shared' };
+  promptSettings.clothes[dress].lastPrompt = prompt ?? getDefaultPrompt();
+  writePromptSettings(promptSettings);
 
   const createdAt = fs.statSync(path.join(generatedDir, result.file)).mtime.toISOString();
   return json(res, 200, {
@@ -312,6 +394,12 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname === '/api/config' && req.method === 'GET') {
       return json(res, 200, { prompt: getDefaultPrompt(), seed: getDefaultSeed() });
+    }
+    if (pathname === '/api/prompt-settings' && req.method === 'GET') {
+      return json(res, 200, readPromptSettings());
+    }
+    if (pathname === '/api/prompt-settings' && req.method === 'PUT') {
+      return json(res, 200, writePromptSettings(await readBody(req)));
     }
     if (pathname === '/api/generate' && req.method === 'POST') {
       return await handleGenerate(res, await readBody(req));
