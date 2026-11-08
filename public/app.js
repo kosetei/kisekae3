@@ -2,6 +2,7 @@ const app = document.getElementById('app');
 const themeToggle = document.getElementById('theme-toggle');
 const savedCharacterLayout = localStorage.getItem('kisekae3-character-layout');
 let characterGridResizeObserver = null;
+let characterGridUpdateFrame = 0;
 const state = {
   catalog: null,
   selectedCatalogItems: { character: new Set(), clothes: new Set() },
@@ -320,14 +321,18 @@ function renderCharacterList() {
     </details>`;
 
   characterGridResizeObserver?.disconnect();
+  cancelAnimationFrame(characterGridUpdateFrame);
+  characterGridUpdateFrame = 0;
   const characterGrid = app.querySelector('.character-grid:not(.is-cover):not(.is-contain)');
   if (characterGrid) {
+    const cards = [...characterGrid.querySelectorAll('.character-card')];
     const updateMasonry = () => {
+      characterGridUpdateFrame = 0;
       const { gridAutoRows, rowGap } = getComputedStyle(characterGrid);
       const rowHeight = parseFloat(gridAutoRows);
       const gap = parseFloat(rowGap);
       if (!Number.isFinite(rowHeight) || rowHeight <= 0 || !Number.isFinite(gap)) return;
-      characterGrid.querySelectorAll('.character-card').forEach((card) => {
+      const spans = cards.map((card) => {
         const image = card.querySelector('img');
         const imageHeight = image
           ? image.naturalWidth && image.naturalHeight
@@ -337,24 +342,29 @@ function renderCharacterList() {
         const metaHeight = card.querySelector('.meta')?.getBoundingClientRect().height || 0;
         const styles = getComputedStyle(card);
         const borders = parseFloat(styles.borderTopWidth) + parseFloat(styles.borderBottomWidth);
-        const span = Math.ceil((imageHeight + metaHeight + borders + gap) / (rowHeight + gap));
-        card.style.gridRowEnd = `span ${Math.max(1, span)}`;
+        return Math.max(1, Math.ceil((imageHeight + metaHeight + borders + gap) / (rowHeight + gap)));
+      });
+      cards.forEach((card, index) => {
+        card.style.gridRowEnd = `span ${spans[index]}`;
       });
     };
-    characterGrid.querySelectorAll('img').forEach((image) => {
-      image.addEventListener('load', updateMasonry, { once: true });
+    const scheduleMasonryUpdate = () => {
+      if (!characterGridUpdateFrame) {
+        characterGridUpdateFrame = requestAnimationFrame(updateMasonry);
+      }
+    };
+    cards.forEach((card) => {
+      card.querySelector('img')?.addEventListener('load', scheduleMasonryUpdate, { once: true });
     });
-    requestAnimationFrame(updateMasonry);
-    const previousWidths = new WeakMap();
-    characterGridResizeObserver = new ResizeObserver((entries) => {
-      const widthChanged = entries.some(({ target, contentRect }) => {
-        const previousWidth = previousWidths.get(target);
-        previousWidths.set(target, contentRect.width);
-        return previousWidth !== undefined && previousWidth !== contentRect.width;
-      });
-      if (widthChanged) updateMasonry();
+    scheduleMasonryUpdate();
+    let previousGridWidth = null;
+    characterGridResizeObserver = new ResizeObserver(([entry]) => {
+      const width = entry.contentRect.width;
+      if (previousGridWidth === null || Math.abs(width - previousGridWidth) >= 1) {
+        previousGridWidth = width;
+        scheduleMasonryUpdate();
+      }
     });
-    characterGrid.querySelectorAll('.character-card').forEach((card) => characterGridResizeObserver.observe(card));
     characterGridResizeObserver.observe(characterGrid);
   }
 
