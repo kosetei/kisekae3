@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node --env-file-if-exists=.env --watch server.js"
+    "start": "node --env-file-if-exists=.env --watch server.js",
+    "start:no-watch": "node --env-file-if-exists=.env server.js"
   }
 }
