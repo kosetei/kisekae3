@@ -62,11 +62,54 @@ header a { color: inherit; text-decoration: none; }
 header .hint { margin-right: auto; }
 .theme-toggle { white-space: nowrap; }
 main { padding: 20px; max-width: 1000px; margin: 0 auto; }
+.home-page { max-width: 1600px; }
 h2 { margin: 0 0 12px; }
 h3 { margin: 0 0 10px; }
 a { color: var(--link); }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+.character-grid {
+  columns: 220px;
+  column-gap: 12px;
+}
+.character-grid .character-card {
+  display: inline-block;
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 0;
+  overflow: hidden;
+  break-inside: avoid;
+}
+.character-grid .character-card img {
+  display: block;
+  height: auto;
+  object-fit: initial;
+}
+.character-grid .character-card .meta {
+  margin: 0;
+  padding: 8px 10px;
+}
+.character-grid.is-cover,
+.character-grid.is-contain {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+}
+.character-grid.is-cover .character-card,
+.character-grid.is-contain .character-card {
+  display: block;
+  margin: 0;
+}
+.character-grid.is-cover .character-card img,
+.character-grid.is-contain .character-card img {
+  height: 250px;
+  background: var(--surface-muted);
+}
+.character-grid.is-cover .character-card img {
+  object-fit: cover;
+}
+.character-grid.is-contain .character-card img { object-fit: contain; }
+}
 .character-list-toolbar, .character-pagination {
   display: flex;
   align-items: center;
@@ -96,7 +139,6 @@ button.card { cursor: pointer; font: inherit; text-align: left; }
   border-radius: 6px;
   background: var(--surface-muted);
 }
-.character-card.fit-contain img { object-fit: contain; }
 .grid.small { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
 .card.selected { outline: 3px solid var(--link); }
 .meta { margin-top: 8px; font-size: 13px; }
@@ -454,6 +496,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   header .hint { display: none; }
   header h1 { font-size: 16px; }
   .theme-toggle { margin-left: auto; padding: 6px 8px; font-size: 12px; }
+  .home-page { padding: 12px; }
+  .character-grid { columns: 2; column-gap: 8px; }
+  .character-grid .character-card { margin-bottom: 8px; }
+  .character-grid.is-cover,
+  .character-grid.is-contain { gap: 8px; }
   .character-page { padding: 0; }
   .character-toolbar { gap: 12px; padding: 8px 10px; }
   .character-toolbar h2 { font-size: 18px; }

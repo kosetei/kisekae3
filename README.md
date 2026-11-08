@@ -7,7 +7,11 @@
 ```
 npm start        # サーバーを起動。server.js と依存モジュールの変更時は自動再起動
 #                # → http://localhost:3000
+npm run start:no-watch # watchなしでサーバーを起動
+#                # → http://localhost:3000
 ```
+
+VS Codeでは「タスク: タスクの実行」から「サーバー起動 (watchあり)」または「サーバー起動 (watchなし)」を選べます。
 
 画面ファイルの変更はサーバー再起動なしで反映されます。ブラウザーを再読み込みしてください。
 

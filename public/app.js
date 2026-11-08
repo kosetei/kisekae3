@@ -1,14 +1,19 @@
 const app = document.getElementById('app');
 const themeToggle = document.getElementById('theme-toggle');
+const savedCharacterLayout = localStorage.getItem('kisekae3-character-layout');
 const state = {
   catalog: null,
   selectedCatalogItems: { character: new Set(), clothes: new Set() },
   catalogFolders: { characters: '', clothes: '' },
   characterSort: 'generated',
   characterPage: 1,
+  characterLayout: ['masonry', 'cover', 'contain'].includes(savedCharacterLayout)
+    ? savedCharacterLayout
+    : savedCharacterLayout === 'legacy'
+      ? (localStorage.getItem('kisekae3-character-thumbnail-fit') === 'cover' ? 'cover' : 'contain')
+      : 'masonry',
   randomFolderActive: false,
   randomCharacterIds: [],
-  characterThumbnailFit: localStorage.getItem('kisekae3-character-thumbnail-fit') === 'cover' ? 'cover' : 'contain',
   organizerFolders: { character: '', clothes: '' },
   organizerOpen: { character: false, clothes: true },
   dressFolder: '',
@@ -245,7 +250,7 @@ function renderCharacterList() {
   state.characterPage = Math.min(state.characterPage, Math.max(pageCount, 1));
   const pageCharacters = sortedCharacters.slice((state.characterPage - 1) * 30, state.characterPage * 30);
   const cards = pageCharacters.map((c) => `
-    <a class="card character-card ${state.characterThumbnailFit === 'contain' ? 'fit-contain' : ''}" href="#/char/${esc(c.id)}" aria-label="${esc(c.name)}">
+    <a class="card character-card" href="#/char/${esc(c.id)}" aria-label="${esc(c.name)}">
       ${c.iconUrl ? `<img src="${c.iconUrl}" alt="" loading="lazy" />` : '<div class="noimg">No icon</div>'}
       <div class="meta">
         <span class="count">${generatedCount(c)} / ${state.catalog.clothes.length} 生成済み</span>
@@ -255,16 +260,17 @@ function renderCharacterList() {
     <div class="card small"><img src="${d.url}" alt="${esc(d.name)}" loading="lazy" /><div class="meta"><strong>${esc(d.name)}</strong></div></div>`).join('');
   const characterListControls = (state.randomFolderActive || state.catalogFolders.characters !== null) && visibleCharacters.length
     ? `<div class="character-list-toolbar">
+        <label for="character-layout">画像表示</label>
+        <select id="character-layout">
+          <option value="masonry" ${state.characterLayout === 'masonry' ? 'selected' : ''}>Pinterest風</option>
+          <option value="cover" ${state.characterLayout === 'cover' ? 'selected' : ''}>余白なし（トリミング）</option>
+          <option value="contain" ${state.characterLayout === 'contain' ? 'selected' : ''}>全体表示（余白あり）</option>
+        </select>
         <label for="character-sort">並び替え</label>
         <select id="character-sort">
           <option value="default" ${state.characterSort === 'default' ? 'selected' : ''}>登録順</option>
           <option value="generated" ${state.characterSort === 'generated' ? 'selected' : ''}>生成数が多い順</option>
           <option value="recent" ${state.characterSort === 'recent' ? 'selected' : ''}>最近生成した順</option>
-        </select>
-        <label for="character-thumbnail-fit">サムネイル</label>
-        <select id="character-thumbnail-fit">
-          <option value="cover" ${state.characterThumbnailFit === 'cover' ? 'selected' : ''}>余白なし</option>
-          <option value="contain" ${state.characterThumbnailFit === 'contain' ? 'selected' : ''}>全体を表示</option>
         </select>
         <span class="character-list-count">${visibleCharacters.length}キャラ</span>
       </div>
@@ -280,7 +286,7 @@ function renderCharacterList() {
       ${renderFolderPicker(characterFolders, state.catalogFolders.characters, 'characters', 'characters', true, state.randomFolderActive)}
       ${!state.randomFolderActive && state.catalogFolders.characters === null
         ? '<p class="empty">フォルダを選ぶと中身が表示されます。</p>'
-        : visibleCharacters.length ? `${characterListControls}<div class="grid">${cards}</div>` : '<p class="empty">このフォルダにキャラはいません。</p>'}`
+        : visibleCharacters.length ? `${characterListControls}<div class="character-grid ${state.characterLayout === 'masonry' ? '' : `is-${state.characterLayout}`}">${cards}</div>` : '<p class="empty">このフォルダにキャラはいません。</p>'}`
       : '<p class="empty">store/characters/ に chara1.png のような画像を追加してください。</p>'}
     <details class="upload-section">
       <summary>キャラ・服を追加</summary>
@@ -317,9 +323,9 @@ function renderCharacterList() {
     state.characterPage = 1;
     renderCharacterList();
   });
-  app.querySelector('#character-thumbnail-fit')?.addEventListener('change', (event) => {
-    state.characterThumbnailFit = event.currentTarget.value;
-    localStorage.setItem('kisekae3-character-thumbnail-fit', state.characterThumbnailFit);
+  app.querySelector('#character-layout')?.addEventListener('change', (event) => {
+    state.characterLayout = event.currentTarget.value;
+    localStorage.setItem('kisekae3-character-layout', state.characterLayout);
     renderCharacterList();
   });
   app.querySelectorAll('[data-character-page]').forEach((button) => {
