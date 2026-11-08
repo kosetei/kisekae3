@@ -168,9 +168,14 @@ function validateGeneratedMetadata(value) {
       }
       metadata[characterId][dressId] = {};
       for (const [file, settings] of Object.entries(images)) {
+        const hasPromptParts = settings?.characterPrompt !== undefined || settings?.dressPrompt !== undefined;
         if (path.basename(file) !== file || !isImage(file)
           || !settings || typeof settings !== 'object' || Array.isArray(settings)
           || typeof settings.prompt !== 'string' || settings.prompt.length > 10000
+          || (hasPromptParts && (
+            typeof settings.characterPrompt !== 'string' || settings.characterPrompt.length > 10000
+            || typeof settings.dressPrompt !== 'string' || settings.dressPrompt.length > 10000
+          ))
           || !(settings.seed === null || (Number.isSafeInteger(settings.seed) && settings.seed >= 0))
           || !(settings.disableLora === undefined || settings.disableLora === null
             || typeof settings.disableLora === 'boolean')) {
@@ -178,6 +183,10 @@ function validateGeneratedMetadata(value) {
         }
         metadata[characterId][dressId][file] = {
           prompt: settings.prompt,
+          ...(hasPromptParts ? {
+            characterPrompt: settings.characterPrompt,
+            dressPrompt: settings.dressPrompt,
+          } : {}),
           seed: settings.seed,
           disableLora: settings.disableLora ?? null,
         };
@@ -331,8 +340,9 @@ function invalidPromptSettings(message) {
 
 function validatePromptSettings(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)
-    || !Array.isArray(value.presets) || !value.clothes || typeof value.clothes !== 'object'
-    || Array.isArray(value.clothes)) {
+    || !Array.isArray(value.presets)
+    || !value.clothes || typeof value.clothes !== 'object' || Array.isArray(value.clothes)
+    || (value.characters !== undefined && (typeof value.characters !== 'object' || Array.isArray(value.characters)))) {
     throw invalidPromptSettings('Invalid prompt settings');
   }
 
@@ -341,43 +351,55 @@ function validatePromptSettings(value) {
     if (!preset || typeof preset !== 'object' || typeof preset.id !== 'string' || !SAFE_ID.test(preset.id)
       || presetIds.has(preset.id) || typeof preset.name !== 'string'
       || !preset.name.trim() || preset.name.length > 100
-      || typeof preset.prompt !== 'string' || preset.prompt.length > 10000) {
+      || typeof preset.prompt !== 'string' || preset.prompt.length > 10000
+      || (preset.scope !== undefined && !['character', 'dress'].includes(preset.scope))) {
       throw invalidPromptSettings('Invalid prompt preset');
     }
     presetIds.add(preset.id);
-    return { id: preset.id, name: preset.name.trim(), prompt: preset.prompt };
+    return { id: preset.id, name: preset.name.trim(), prompt: preset.prompt, scope: preset.scope ?? 'dress' };
   });
 
-  const clothes = {};
-  for (const [dressId, settings] of Object.entries(value.clothes)) {
-    if (!SAFE_ID.test(dressId) || !settings || typeof settings !== 'object' || Array.isArray(settings)
-      || !['shared', 'default', 'saved', 'last', 'preset'].includes(settings.source ?? 'shared')) {
-      throw invalidPromptSettings(`Invalid prompt settings for clothes: ${dressId}`);
+  function normalizePromptEntry(entries, label, scope) {
+    const normalized = {};
+    for (const [id, settings] of Object.entries(entries || {})) {
+      if (!SAFE_ID.test(id) || !settings || typeof settings !== 'object' || Array.isArray(settings)
+        || !['shared', 'default', 'saved', 'last', 'preset'].includes(settings.source ?? 'shared')) {
+        throw invalidPromptSettings(`Invalid prompt settings for ${label}: ${id}`);
+      }
+      let source = settings.source ?? 'shared';
+      if (scope === 'character' && source === 'default') source = 'shared';
+      if (source === 'preset' && !presetIds.has(settings.presetId)) {
+        throw invalidPromptSettings(`Unknown prompt preset for ${label}: ${id}`);
+      }
+      if (source === 'preset'
+        && presets.find((preset) => preset.id === settings.presetId)?.scope !== scope) {
+        source = 'shared';
+      }
+      if (settings.lastPrompt !== undefined
+        && (typeof settings.lastPrompt !== 'string' || settings.lastPrompt.length > 10000)) {
+        throw invalidPromptSettings(`Invalid last prompt for ${label}: ${id}`);
+      }
+      if (settings.savedPrompt !== undefined
+        && (typeof settings.savedPrompt !== 'string' || settings.savedPrompt.length > 10000)) {
+        throw invalidPromptSettings(`Invalid saved prompt for ${label}: ${id}`);
+      }
+      normalized[id] = {
+        source,
+        ...(source === 'preset' ? { presetId: settings.presetId } : {}),
+        ...(settings.lastPrompt !== undefined ? { lastPrompt: settings.lastPrompt } : {}),
+        ...(settings.savedPrompt !== undefined ? { savedPrompt: settings.savedPrompt } : {}),
+      };
     }
-    const source = settings.source ?? 'shared';
-    if (source === 'preset' && !presetIds.has(settings.presetId)) {
-      throw invalidPromptSettings(`Unknown prompt preset for clothes: ${dressId}`);
-    }
-    if (settings.lastPrompt !== undefined
-      && (typeof settings.lastPrompt !== 'string' || settings.lastPrompt.length > 10000)) {
-      throw invalidPromptSettings(`Invalid last prompt for clothes: ${dressId}`);
-    }
-    if (settings.savedPrompt !== undefined
-      && (typeof settings.savedPrompt !== 'string' || settings.savedPrompt.length > 10000)) {
-      throw invalidPromptSettings(`Invalid saved prompt for clothes: ${dressId}`);
-    }
-    clothes[dressId] = {
-      source,
-      ...(source === 'preset' ? { presetId: settings.presetId } : {}),
-      ...(settings.lastPrompt !== undefined ? { lastPrompt: settings.lastPrompt } : {}),
-      ...(settings.savedPrompt !== undefined ? { savedPrompt: settings.savedPrompt } : {}),
-    };
+    return normalized;
   }
-  return { presets, clothes };
+
+  const clothes = normalizePromptEntry(value.clothes, 'clothes', 'dress');
+  const characters = normalizePromptEntry(value.characters, 'characters', 'character');
+  return { presets, clothes, characters };
 }
 
 function readPromptSettings() {
-  if (!fs.existsSync(PROMPT_SETTINGS_FILE)) return { presets: [], clothes: {} };
+  if (!fs.existsSync(PROMPT_SETTINGS_FILE)) return { presets: [], clothes: {}, characters: {} };
   try {
     return validatePromptSettings(JSON.parse(fs.readFileSync(PROMPT_SETTINGS_FILE, 'utf8')));
   } catch (error) {
@@ -466,7 +488,13 @@ function handleGetGeneratedSettings(res, query) {
     return json(res, 404, { error: 'generated image not found' });
   }
   const settings = readGeneratedMetadata()[request.character]?.[request.dress]?.[request.file];
-  return json(res, 200, settings ?? { prompt: null, seed: null, disableLora: null });
+  return json(res, 200, settings ?? {
+    prompt: null,
+    characterPrompt: null,
+    dressPrompt: null,
+    seed: null,
+    disableLora: null,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -474,12 +502,19 @@ function handleGetGeneratedSettings(res, query) {
 // ---------------------------------------------------------------------------
 
 async function handleGenerate(res, body) {
-  const { character, dress, prompt, seed, force, disableLora } = body ?? {};
+  const { character, dress, prompt, characterPrompt, dressPrompt, seed, force, disableLora } = body ?? {};
   if (!SAFE_ID.test(character ?? '') || !SAFE_ID.test(dress ?? '')) {
     return json(res, 400, { error: 'character/dress id must be alphanumeric' });
   }
   if (prompt !== undefined && (typeof prompt !== 'string' || prompt.length > 10000)) {
     return json(res, 400, { error: 'prompt must be a string of 10000 characters or fewer' });
+  }
+  const hasPromptParts = characterPrompt !== undefined || dressPrompt !== undefined;
+  if (hasPromptParts && (
+    typeof characterPrompt !== 'string' || characterPrompt.length > 10000
+    || typeof dressPrompt !== 'string' || dressPrompt.length > 10000
+  )) {
+    return json(res, 400, { error: 'characterPrompt and dressPrompt must be strings of 10000 characters or fewer' });
   }
   if (force !== undefined && typeof force !== 'boolean') {
     return json(res, 400, { error: 'force must be a boolean' });
@@ -491,6 +526,14 @@ async function handleGenerate(res, body) {
     return json(res, 400, { error: 'seed must be a non-negative safe integer' });
   }
 
+  const actualPrompt = hasPromptParts
+    ? [characterPrompt.trim(), dressPrompt.trim()].filter(Boolean).join('\n')
+    : prompt ?? getDefaultPrompt();
+  if (actualPrompt.length > 10000) {
+    return json(res, 400, { error: 'combined prompt must be 10000 characters or fewer' });
+  }
+  const actualCharacterPrompt = hasPromptParts ? characterPrompt : '';
+  const actualDressPrompt = hasPromptParts ? dressPrompt : actualPrompt;
   const charactersDir = path.join(STORE_DIR, 'characters');
   const clothesDir = path.join(STORE_DIR, 'clothes');
   const generatedDir = path.join(STORE_DIR, 'generated', character);
@@ -515,7 +558,6 @@ async function handleGenerate(res, body) {
     });
   }
 
-  const actualPrompt = prompt ?? getDefaultPrompt();
   const actualSeed = seed ?? getDefaultSeed();
   fs.mkdirSync(generatedDir, { recursive: true });
   const result = await generateImage({
@@ -536,6 +578,8 @@ async function handleGenerate(res, body) {
   generatedMetadata[character][dress] ??= {};
   generatedMetadata[character][dress][result.file] = {
     prompt: actualPrompt,
+    characterPrompt: actualCharacterPrompt,
+    dressPrompt: actualDressPrompt,
     seed: actualSeed,
     disableLora: disableLora ?? false,
   };
@@ -543,7 +587,9 @@ async function handleGenerate(res, body) {
 
   const promptSettings = readPromptSettings();
   promptSettings.clothes[dress] ??= { source: 'shared' };
-  promptSettings.clothes[dress].lastPrompt = actualPrompt;
+  promptSettings.clothes[dress].lastPrompt = actualDressPrompt;
+  promptSettings.characters[character] ??= { source: 'shared' };
+  promptSettings.characters[character].lastPrompt = actualCharacterPrompt;
   writePromptSettings(promptSettings);
 
   const createdAt = fs.statSync(path.join(generatedDir, result.file)).mtime.toISOString();

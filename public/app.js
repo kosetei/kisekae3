@@ -26,8 +26,12 @@ const state = {
   uploading: false,
   prompt: '',
   promptBaseline: '',
+  characterPrompt: '',
+  characterPromptBaseline: '',
+  dressPrompt: '',
+  dressPromptBaseline: '',
   defaultPrompt: '',
-  promptSettings: { presets: [], clothes: {} },
+  promptSettings: { presets: [], clothes: {}, characters: {} },
   seed: 0,
   disableLora: false,
   status: '',
@@ -108,8 +112,32 @@ function promptSettingsForDress(dressId) {
   return state.promptSettings.clothes[dressId] || { source: 'shared' };
 }
 
+function promptSettingsForCharacter(characterId) {
+  return state.promptSettings.characters[characterId] || { source: 'shared' };
+}
+
+function combinePrompts(characterPrompt = '', dressPrompt = '') {
+  const parts = [String(characterPrompt ?? '').trim(), String(dressPrompt ?? '').trim()].filter(Boolean);
+  return parts.join('\n');
+}
+
+function syncCombinedPrompt() {
+  state.prompt = combinePrompts(state.characterPrompt, state.dressPrompt);
+}
+
+function promptForSettings(settings, fallbackPrompt) {
+  if (settings.source === 'preset') {
+    return state.promptSettings.presets.find((preset) => preset.id === settings.presetId)?.prompt ?? fallbackPrompt;
+  }
+  if (settings.source === 'saved' && settings.savedPrompt !== undefined) return settings.savedPrompt;
+  if (settings.source === 'last' && settings.lastPrompt !== undefined) return settings.lastPrompt;
+  if (settings.source === 'default') return state.defaultPrompt;
+  return fallbackPrompt;
+}
+
 function isPromptDirty() {
-  return state.prompt !== state.promptBaseline;
+  return state.characterPrompt !== state.characterPromptBaseline
+    || state.dressPrompt !== state.dressPromptBaseline;
 }
 
 async function persistPromptSettings() {
@@ -120,25 +148,60 @@ async function persistPromptSettings() {
   });
 }
 
+async function savePromptForCurrentCharacter() {
+  if (!state.currentCharacter) return false;
+  const settings = promptSettingsForCharacter(state.currentCharacter);
+  const previousSettings = { ...settings };
+  const previousBaseline = state.characterPromptBaseline;
+  state.promptSettings.characters[state.currentCharacter] = {
+    ...settings,
+    source: 'saved',
+    savedPrompt: state.characterPrompt,
+  };
+  try {
+    await persistPromptSettings();
+    state.characterPromptBaseline = state.characterPrompt;
+    setStatus('キャラ用プロンプトを保存しました');
+    return true;
+  } catch (error) {
+    state.promptSettings.characters[state.currentCharacter] = previousSettings;
+    state.characterPromptBaseline = previousBaseline;
+    setStatus(`プロンプト保存失敗: ${error.message}`);
+    return false;
+  }
+}
+
 async function savePromptForCurrentDress() {
-  if (!state.selectedDress) return;
+  if (!state.selectedDress) return false;
   const settings = promptSettingsForDress(state.selectedDress);
+  const previousSettings = { ...settings };
+  const previousBaseline = state.dressPromptBaseline;
   state.promptSettings.clothes[state.selectedDress] = {
     ...settings,
     source: 'saved',
-    savedPrompt: state.prompt,
+    savedPrompt: state.dressPrompt,
   };
-  await persistPromptSettings();
-  state.promptBaseline = state.prompt;
+  try {
+    await persistPromptSettings();
+    state.dressPromptBaseline = state.dressPrompt;
+    setStatus('服用プロンプトを保存しました');
+    return true;
+  } catch (error) {
+    state.promptSettings.clothes[state.selectedDress] = previousSettings;
+    state.dressPromptBaseline = previousBaseline;
+    setStatus(`プロンプト保存失敗: ${error.message}`);
+    return false;
+  }
 }
 
 async function confirmPromptSaveBeforeLeaving() {
   if (!isPromptDirty()) return true;
-  if (!window.confirm('未保存のプロンプトがあります。現在の服の保存済みプロンプトとして保存しますか？\n「いいえ」を選ぶと保存せずに続行します。')) {
+  if (!window.confirm('未保存のプロンプトがあります。現在のキャラ用または服用の保存済みプロンプトとして保存しますか？\n「いいえ」を選ぶと保存せずに続行します。')) {
     return true;
   }
   try {
-    await savePromptForCurrentDress();
+    if (state.characterPrompt !== state.characterPromptBaseline && !await savePromptForCurrentCharacter()) return false;
+    if (state.dressPrompt !== state.dressPromptBaseline && !await savePromptForCurrentDress()) return false;
     return true;
   } catch (error) {
     setStatus(`プロンプト保存失敗: ${error.message}`);
@@ -552,8 +615,16 @@ function renderCharacterView() {
   const generatedTotal = versions.length;
   const stageSrc = state.stageDisplayedSrc || displaySrc;
   const dressPromptSettings = sel ? promptSettingsForDress(sel) : { source: 'shared' };
-  const activePreset = state.promptSettings.presets.find((preset) => (
-    dressPromptSettings.source === 'preset' && preset.id === dressPromptSettings.presetId
+  const characterPromptSettings = state.currentCharacter ? promptSettingsForCharacter(state.currentCharacter) : { source: 'shared' };
+  const characterPreset = state.promptSettings.presets.find((preset) => (
+    characterPromptSettings.source === 'preset'
+      && preset.id === characterPromptSettings.presetId
+      && preset.scope === 'character'
+  ));
+  const dressPreset = state.promptSettings.presets.find((preset) => (
+    dressPromptSettings.source === 'preset'
+      && preset.id === dressPromptSettings.presetId
+      && preset.scope === 'dress'
   ));
 
   const view = `
@@ -620,8 +691,10 @@ function renderCharacterView() {
       <dialog id="generation-settings-dialog" class="generation-settings-dialog" aria-labelledby="generation-settings-title">
         <form method="dialog" class="generation-settings-form">
           <h3 id="generation-settings-title">生成時の設定</h3>
-          <label for="generation-settings-prompt">プロンプト</label>
-          <textarea id="generation-settings-prompt" rows="8" readonly></textarea>
+          <label for="generation-settings-character-prompt">キャラ調整用のプロンプト</label>
+          <textarea id="generation-settings-character-prompt" rows="4" readonly></textarea>
+          <label for="generation-settings-dress-prompt">服のプロンプト</label>
+          <textarea id="generation-settings-dress-prompt" rows="4" readonly></textarea>
           <p>シード: <span id="generation-settings-seed">読み込み中…</span></p>
           <p>LoRA: <span id="generation-settings-lora">読み込み中…</span></p>
           <p id="generation-settings-status" class="upload-status" role="status">読み込み中…</p>
@@ -664,25 +737,45 @@ function renderCharacterView() {
           </div>
         </section>
         <section class="prompt-settings">
-          <label for="prompt">生成プロンプト</label>
-          <textarea id="prompt" rows="5">${esc(state.prompt)}</textarea>
+          <label for="character-prompt">キャラ調整用のプロンプト</label>
+          <textarea id="character-prompt" rows="3">${esc(state.characterPrompt)}</textarea>
+          <label for="character-prompt-source">このキャラで使うプロンプト</label>
+          <select id="character-prompt-source" ${state.currentCharacter ? '' : 'disabled'}>
+            <option value="shared" ${characterPromptSettings.source === 'shared' ? 'selected' : ''}>共通の入力を引き継ぐ</option>
+            ${characterPromptSettings.savedPrompt !== undefined ? `<option value="saved" ${characterPromptSettings.source === 'saved' ? 'selected' : ''}>このキャラに保存したプロンプト</option>` : ''}
+            ${characterPromptSettings.lastPrompt !== undefined ? `<option value="last" ${characterPromptSettings.source === 'last' ? 'selected' : ''}>このキャラの最後の生成プロンプト</option>` : ''}
+            ${state.promptSettings.presets.filter((preset) => preset.scope === 'character').map((preset) => `
+              <option value="preset:${esc(preset.id)}" ${characterPromptSettings.source === 'preset' && characterPromptSettings.presetId === preset.id ? 'selected' : ''}>プリセット: ${esc(preset.name)}</option>`).join('')}
+          </select>
+          <div class="prompt-preset-actions">
+            <label for="character-preset-name">キャラ用プリセット名</label>
+            <input id="character-preset-name" type="text" maxlength="100" placeholder="例: キャラ調整" />
+            <button id="save-character-preset" type="button">キャラ用入力をプリセットに保存</button>
+            <button id="update-character-preset" type="button" ${characterPreset ? '' : 'disabled'}>選択中を更新</button>
+            <button id="delete-character-preset" type="button" ${characterPreset ? '' : 'disabled'}>選択中を削除</button>
+            <button id="save-character-prompt" type="button">このキャラ用プロンプトを保存</button>
+          </div>
+
+          <label for="dress-prompt">服のプロンプト</label>
+          <textarea id="dress-prompt" rows="3">${esc(state.dressPrompt)}</textarea>
           <label for="prompt-source">この服で使うプロンプト</label>
           <select id="prompt-source" ${sel ? '' : 'disabled'}>
             <option value="shared" ${dressPromptSettings.source === 'shared' ? 'selected' : ''}>共通の入力を引き継ぐ</option>
             <option value="default" ${dressPromptSettings.source === 'default' ? 'selected' : ''}>デフォルトプロンプト</option>
             ${dressPromptSettings.savedPrompt !== undefined ? `<option value="saved" ${dressPromptSettings.source === 'saved' ? 'selected' : ''}>この服に保存したプロンプト</option>` : ''}
             ${dressPromptSettings.lastPrompt !== undefined ? `<option value="last" ${dressPromptSettings.source === 'last' ? 'selected' : ''}>この服の最後の生成プロンプト</option>` : ''}
-            ${state.promptSettings.presets.map((preset) => `
+            ${state.promptSettings.presets.filter((preset) => preset.scope === 'dress').map((preset) => `
               <option value="preset:${esc(preset.id)}" ${dressPromptSettings.source === 'preset' && dressPromptSettings.presetId === preset.id ? 'selected' : ''}>プリセット: ${esc(preset.name)}</option>`).join('')}
           </select>
           <div class="prompt-preset-actions">
             <label for="preset-name">プリセット名</label>
             <input id="preset-name" type="text" maxlength="100" placeholder="例: 上下セット" />
-            <button id="save-preset" type="button">現在のプロンプトを保存</button>
-            <button id="update-preset" type="button" ${activePreset ? '' : 'disabled'}>選択中を更新</button>
-            <button id="delete-preset" type="button" ${activePreset ? '' : 'disabled'}>選択中を削除</button>
+            <button id="save-prompt" type="button">この服用プロンプトを保存</button>
+            <button id="save-preset" type="button">服用入力をプリセットに保存</button>
+            <button id="update-preset" type="button" ${dressPreset ? '' : 'disabled'}>選択中を更新</button>
+            <button id="delete-preset" type="button" ${dressPreset ? '' : 'disabled'}>選択中を削除</button>
           </div>
-          <p class="hint">プリセットを保存しても、現在の服への適用は自動で変わりません。使う場合は上の選択欄から選んでください。</p>
+          <p class="hint">生成時は「キャラ調整用」と「服の」プロンプトを合成して送信します。履歴と保存もキャラごと／服ごとに分けて管理されます。</p>
         </section>
       </div>
     </details>`;
@@ -770,13 +863,24 @@ function renderCharacterView() {
       renderCharacterView();
     });
   }
-  document.getElementById('prompt').addEventListener('input', (event) => {
-    state.prompt = event.target.value;
+  document.getElementById('character-prompt')?.addEventListener('input', (event) => {
+    state.characterPrompt = event.target.value;
+    syncCombinedPrompt();
   });
+  document.getElementById('dress-prompt')?.addEventListener('input', (event) => {
+    state.dressPrompt = event.target.value;
+    syncCombinedPrompt();
+  });
+  document.getElementById('character-prompt-source')?.addEventListener('change', changeCharacterPromptSource);
   document.getElementById('prompt-source').addEventListener('change', changePromptSource);
-  document.getElementById('save-preset').addEventListener('click', savePromptPreset);
-  document.getElementById('update-preset').addEventListener('click', updatePromptPreset);
-  document.getElementById('delete-preset').addEventListener('click', deletePromptPreset);
+  document.getElementById('save-character-prompt').addEventListener('click', savePromptForCurrentCharacter);
+  document.getElementById('save-prompt').addEventListener('click', savePromptForCurrentDress);
+  document.getElementById('save-character-preset').addEventListener('click', () => savePromptPreset('character'));
+  document.getElementById('save-preset').addEventListener('click', () => savePromptPreset('dress'));
+  document.getElementById('update-character-preset').addEventListener('click', () => updatePromptPreset('character'));
+  document.getElementById('update-preset').addEventListener('click', () => updatePromptPreset('dress'));
+  document.getElementById('delete-character-preset').addEventListener('click', () => deletePromptPreset('character'));
+  document.getElementById('delete-preset').addEventListener('click', () => deletePromptPreset('dress'));
   document.getElementById('seed').addEventListener('input', (event) => {
     state.seed = event.target.value;
   });
@@ -942,15 +1046,16 @@ async function selectDress(dressId) {
   const settings = promptSettingsForDress(dressId);
   if (settings.source === 'preset') {
     const preset = state.promptSettings.presets.find((item) => item.id === settings.presetId);
-    if (preset) state.prompt = preset.prompt;
+    if (preset) state.dressPrompt = preset.prompt;
   } else if (settings.source === 'saved' && settings.savedPrompt !== undefined) {
-    state.prompt = settings.savedPrompt;
+    state.dressPrompt = settings.savedPrompt;
   } else if (settings.source === 'last' && settings.lastPrompt !== undefined) {
-    state.prompt = settings.lastPrompt;
+    state.dressPrompt = settings.lastPrompt;
   } else if (settings.source === 'default') {
-    state.prompt = state.defaultPrompt;
+    state.dressPrompt = state.defaultPrompt;
   }
-  state.promptBaseline = state.prompt;
+  syncCombinedPrompt();
+  state.dressPromptBaseline = state.dressPrompt;
   const char = findCharacter(state.currentCharacter);
   if (generatedVersions(char, dressId).length) {
     renderCharacterView();
@@ -987,13 +1092,15 @@ async function setPrimaryImage(file) {
 async function showGenerationSettings(file) {
   const dialog = document.getElementById('generation-settings-dialog');
   if (!dialog) return;
-  const prompt = document.getElementById('generation-settings-prompt');
+  const characterPrompt = document.getElementById('generation-settings-character-prompt');
+  const dressPrompt = document.getElementById('generation-settings-dress-prompt');
   const seed = document.getElementById('generation-settings-seed');
   const lora = document.getElementById('generation-settings-lora');
   const status = document.getElementById('generation-settings-status');
   const applyButton = document.getElementById('apply-generation-settings');
   state.generationSettings = null;
-  prompt.value = '';
+  characterPrompt.value = '';
+  dressPrompt.value = '';
   seed.textContent = '読み込み中…';
   lora.textContent = '読み込み中…';
   status.textContent = '読み込み中…';
@@ -1008,12 +1115,13 @@ async function showGenerationSettings(file) {
   try {
     const settings = await api(`/api/generated-settings?${query}`);
     state.generationSettings = settings;
-    prompt.value = settings.prompt ?? '';
+    characterPrompt.value = settings.characterPrompt ?? '';
+    dressPrompt.value = settings.dressPrompt ?? settings.prompt ?? '';
     seed.textContent = settings.seed === null ? '記録なし' : String(settings.seed);
     lora.textContent = typeof settings.disableLora === 'boolean'
       ? settings.disableLora ? '使わない' : '使う'
       : '記録なし';
-    const hasSettings = settings.prompt !== null || settings.seed !== null
+    const hasSettings = settings.prompt !== null || settings.characterPrompt !== null || settings.dressPrompt !== null || settings.seed !== null
       || typeof settings.disableLora === 'boolean';
     status.textContent = hasSettings ? '' : 'この画像の生成設定は保存されていません。';
     applyButton.disabled = !hasSettings;
@@ -1027,7 +1135,19 @@ async function showGenerationSettings(file) {
 function applyGenerationSettings() {
   const settings = state.generationSettings;
   if (!settings) return;
-  if (typeof settings.prompt === 'string') state.prompt = settings.prompt;
+  if (typeof settings.characterPrompt === 'string' || typeof settings.dressPrompt === 'string') {
+    state.characterPrompt = settings.characterPrompt ?? '';
+    state.dressPrompt = settings.dressPrompt ?? '';
+    state.characterPromptBaseline = state.characterPrompt;
+    state.dressPromptBaseline = state.dressPrompt;
+    syncCombinedPrompt();
+  } else if (typeof settings.prompt === 'string') {
+    state.characterPrompt = '';
+    state.dressPrompt = settings.prompt;
+    state.characterPromptBaseline = state.characterPrompt;
+    state.dressPromptBaseline = state.dressPrompt;
+    syncCombinedPrompt();
+  }
   if (Number.isSafeInteger(settings.seed)) state.seed = settings.seed;
   if (typeof settings.disableLora === 'boolean') state.disableLora = settings.disableLora;
   state.advancedOpen = true;
@@ -1060,14 +1180,56 @@ async function deleteGeneratedImage(file) {
   }
 }
 
+async function changeCharacterPromptSource(event) {
+  if (!await confirmPromptSaveBeforeLeaving()) {
+    renderCharacterView();
+    return;
+  }
+  const characterId = state.currentCharacter;
+  const previousPrompt = state.characterPrompt;
+  const previousBaseline = state.characterPromptBaseline;
+  const previousSettings = JSON.stringify(state.promptSettings);
+  const settings = { ...promptSettingsForCharacter(characterId) };
+  const value = event.target.value;
+  if (value.startsWith('preset:')) {
+    settings.source = 'preset';
+    settings.presetId = value.slice('preset:'.length);
+    const preset = state.promptSettings.presets.find((item) => item.id === settings.presetId);
+    if (!preset) throw new Error('選択したプリセットが見つかりません');
+    state.characterPrompt = preset.prompt;
+  } else {
+    settings.source = value;
+    delete settings.presetId;
+    if (value === 'saved' && settings.savedPrompt !== undefined) {
+      state.characterPrompt = settings.savedPrompt;
+    } else if (value === 'last' && settings.lastPrompt !== undefined) {
+      state.characterPrompt = settings.lastPrompt;
+    }
+  }
+  state.promptSettings.characters[characterId] = settings;
+  try {
+    await persistPromptSettings();
+    state.characterPromptBaseline = state.characterPrompt;
+    syncCombinedPrompt();
+    renderCharacterView();
+  } catch (error) {
+    state.promptSettings = JSON.parse(previousSettings);
+    state.characterPrompt = previousPrompt;
+    state.characterPromptBaseline = previousBaseline;
+    syncCombinedPrompt();
+    setStatus(`設定保存失敗: ${error.message}`);
+    renderCharacterView();
+  }
+}
+
 async function changePromptSource(event) {
   if (!await confirmPromptSaveBeforeLeaving()) {
     renderCharacterView();
     return;
   }
   const dressId = state.selectedDress;
-  const previousPrompt = state.prompt;
-  const previousBaseline = state.promptBaseline;
+  const previousPrompt = state.dressPrompt;
+  const previousBaseline = state.dressPromptBaseline;
   const previousSettings = JSON.stringify(state.promptSettings);
   const settings = { ...promptSettingsForDress(dressId) };
   const value = event.target.value;
@@ -1076,35 +1238,38 @@ async function changePromptSource(event) {
     settings.presetId = value.slice('preset:'.length);
     const preset = state.promptSettings.presets.find((item) => item.id === settings.presetId);
     if (!preset) throw new Error('選択したプリセットが見つかりません');
-    state.prompt = preset.prompt;
+    state.dressPrompt = preset.prompt;
   } else {
     settings.source = value;
     delete settings.presetId;
     if (value === 'saved' && settings.savedPrompt !== undefined) {
-      state.prompt = settings.savedPrompt;
+      state.dressPrompt = settings.savedPrompt;
     } else if (value === 'last' && settings.lastPrompt !== undefined) {
-      state.prompt = settings.lastPrompt;
+      state.dressPrompt = settings.lastPrompt;
     } else if (value === 'default') {
-      state.prompt = state.defaultPrompt;
+      state.dressPrompt = state.defaultPrompt;
     }
   }
   state.promptSettings.clothes[dressId] = settings;
   try {
     await persistPromptSettings();
-    state.promptBaseline = state.prompt;
+    state.dressPromptBaseline = state.dressPrompt;
+    syncCombinedPrompt();
     renderCharacterView();
   } catch (error) {
     state.promptSettings = JSON.parse(previousSettings);
-    state.prompt = previousPrompt;
-    state.promptBaseline = previousBaseline;
+    state.dressPrompt = previousPrompt;
+    state.dressPromptBaseline = previousBaseline;
+    syncCombinedPrompt();
     setStatus(`設定保存失敗: ${error.message}`);
     renderCharacterView();
   }
 }
 
-async function savePromptPreset() {
-  const nameInput = document.getElementById('preset-name');
-  const saveButton = document.getElementById('save-preset');
+async function savePromptPreset(scope) {
+  const isCharacter = scope === 'character';
+  const nameInput = document.getElementById(isCharacter ? 'character-preset-name' : 'preset-name');
+  const saveButton = document.getElementById(isCharacter ? 'save-character-preset' : 'save-preset');
   const name = nameInput.value.trim();
   if (!name) {
     setStatus('プリセット名を入力してください');
@@ -1118,11 +1283,17 @@ async function savePromptPreset() {
   saveButton.disabled = true;
   setStatus('プリセットを保存中…');
   try {
-    const preset = { id: createPresetId(), name, prompt: state.prompt };
+    const preset = {
+      id: createPresetId(),
+      name,
+      prompt: isCharacter ? state.characterPrompt : state.dressPrompt,
+      scope,
+    };
     state.promptSettings.presets.push(preset);
     await persistPromptSettings();
-    state.promptBaseline = state.prompt;
-    setStatus(`プリセット「${name}」を保存しました。使う服で選択してください`);
+    if (isCharacter) state.characterPromptBaseline = state.characterPrompt;
+    else state.dressPromptBaseline = state.dressPrompt;
+    setStatus(`プリセット「${name}」を保存しました。${isCharacter ? 'キャラ' : '服'}用の選択欄から選べます`);
     renderCharacterView();
   } catch (error) {
     state.promptSettings = JSON.parse(previousSettings);
@@ -1132,15 +1303,19 @@ async function savePromptPreset() {
   }
 }
 
-async function updatePromptPreset() {
-  const settings = promptSettingsForDress(state.selectedDress);
+async function updatePromptPreset(scope) {
+  const isCharacter = scope === 'character';
+  const settings = isCharacter
+    ? promptSettingsForCharacter(state.currentCharacter)
+    : promptSettingsForDress(state.selectedDress);
   const preset = state.promptSettings.presets.find((item) => item.id === settings.presetId);
   if (!preset) return;
   const previousPrompt = preset.prompt;
-  preset.prompt = state.prompt;
+  preset.prompt = isCharacter ? state.characterPrompt : state.dressPrompt;
   try {
     await persistPromptSettings();
-    state.promptBaseline = state.prompt;
+    if (isCharacter) state.characterPromptBaseline = state.characterPrompt;
+    else state.dressPromptBaseline = state.dressPrompt;
     setStatus(`プリセット「${preset.name}」を更新しました`);
   } catch (error) {
     preset.prompt = previousPrompt;
@@ -1148,10 +1323,13 @@ async function updatePromptPreset() {
   }
 }
 
-async function deletePromptPreset() {
-  const settings = promptSettingsForDress(state.selectedDress);
+async function deletePromptPreset(scope) {
+  const isCharacter = scope === 'character';
+  const settings = isCharacter
+    ? promptSettingsForCharacter(state.currentCharacter)
+    : promptSettingsForDress(state.selectedDress);
   const preset = state.promptSettings.presets.find((item) => item.id === settings.presetId);
-  if (!preset || !window.confirm(`プリセット「${preset.name}」を削除しますか？使用中の服は共通の入力に切り替わります。`)) return;
+  if (!preset || !window.confirm(`プリセット「${preset.name}」を削除しますか？使用中の${isCharacter ? 'キャラ' : '服'}は共通の入力に切り替わります。`)) return;
   if (!await confirmPromptSaveBeforeLeaving()) return;
 
   const previousSettings = JSON.stringify(state.promptSettings);
@@ -1160,6 +1338,12 @@ async function deletePromptPreset() {
     if (dressSettings.presetId === preset.id) {
       dressSettings.source = 'shared';
       delete dressSettings.presetId;
+    }
+  }
+  for (const characterSettings of Object.values(state.promptSettings.characters)) {
+    if (characterSettings.presetId === preset.id) {
+      characterSettings.source = 'shared';
+      delete characterSettings.presetId;
     }
   }
   try {
@@ -1172,13 +1356,16 @@ async function deletePromptPreset() {
   }
 }
 
-async function generate(char, dressId, force = false) {
+async function generate(char, dressId, force = false, promptParts = null) {
   if (state.busy) return;
   const seed = Number(state.seed);
   if (!Number.isSafeInteger(seed) || seed < 0) {
     setStatus('シードは0以上の整数を入力してください');
     return;
   }
+  const characterPrompt = promptParts?.characterPrompt ?? state.characterPrompt;
+  const dressPrompt = promptParts?.dressPrompt ?? state.dressPrompt;
+  const prompt = combinePrompts(characterPrompt, dressPrompt);
   state.busy = true;
   renderCharacterView();
   try {
@@ -1188,7 +1375,9 @@ async function generate(char, dressId, force = false) {
       body: JSON.stringify({
         character: char.id,
         dress: dressId,
-        prompt: state.prompt,
+        prompt,
+        characterPrompt,
+        dressPrompt,
         seed,
         force,
         disableLora: state.disableLora,
@@ -1201,8 +1390,14 @@ async function generate(char, dressId, force = false) {
       ];
     }
     if (res.status === 'generated') {
-      const settings = promptSettingsForDress(dressId);
-      state.promptSettings.clothes[dressId] = { ...settings, lastPrompt: state.prompt };
+      const dressSettings = promptSettingsForDress(dressId);
+      state.promptSettings.clothes[dressId] = { ...dressSettings, lastPrompt: dressPrompt };
+      const characterSettings = promptSettingsForCharacter(char.id);
+      state.promptSettings.characters[char.id] = { ...characterSettings, lastPrompt: characterPrompt };
+      if (!promptParts) {
+        state.dressPromptBaseline = state.dressPrompt;
+        state.characterPromptBaseline = state.characterPrompt;
+      }
       state.promptBaseline = state.prompt;
     }
     state.selectedGenerated[dressId] = res.url;
@@ -1221,7 +1416,10 @@ async function generateAll() {
   const char = findCharacter(state.currentCharacter);
   const missing = state.catalog.clothes.filter((d) => !generatedVersions(char, d.id).length);
   for (const d of missing) {
-    await generate(char, d.id);
+    await generate(char, d.id, false, {
+      characterPrompt: state.characterPrompt,
+      dressPrompt: promptForSettings(promptSettingsForDress(d.id), state.dressPrompt),
+    });
   }
 }
 
@@ -1394,8 +1592,34 @@ function route() {
   const m = location.hash.match(/^#\/char\/([A-Za-z0-9_-]+)/);
   state.currentCharacter = m ? m[1] : null;
   state.routeHash = location.hash;
-  if (state.currentCharacter) renderCharacterView();
-  else renderCharacterList();
+  if (state.currentCharacter) {
+    const characterSettings = promptSettingsForCharacter(state.currentCharacter);
+    if (characterSettings.source === 'preset') {
+      const preset = state.promptSettings.presets.find((item) => item.id === characterSettings.presetId);
+      if (preset) state.characterPrompt = preset.prompt;
+    } else if (characterSettings.source === 'saved' && characterSettings.savedPrompt !== undefined) {
+      state.characterPrompt = characterSettings.savedPrompt;
+    } else if (characterSettings.source === 'last' && characterSettings.lastPrompt !== undefined) {
+      state.characterPrompt = characterSettings.lastPrompt;
+    }
+    state.characterPromptBaseline = state.characterPrompt;
+    if (state.selectedDress) {
+      const dressSettings = promptSettingsForDress(state.selectedDress);
+      if (dressSettings.source === 'preset') {
+        const preset = state.promptSettings.presets.find((item) => item.id === dressSettings.presetId);
+        if (preset) state.dressPrompt = preset.prompt;
+      } else if (dressSettings.source === 'saved' && dressSettings.savedPrompt !== undefined) {
+        state.dressPrompt = dressSettings.savedPrompt;
+      } else if (dressSettings.source === 'last' && dressSettings.lastPrompt !== undefined) {
+        state.dressPrompt = dressSettings.lastPrompt;
+      } else if (dressSettings.source === 'default') {
+        state.dressPrompt = state.defaultPrompt;
+      }
+      state.dressPromptBaseline = state.dressPrompt;
+    }
+    syncCombinedPrompt();
+    renderCharacterView();
+  } else renderCharacterList();
 }
 
 window.addEventListener('hashchange', async () => {
@@ -1417,8 +1641,12 @@ window.addEventListener('beforeunload', (event) => {
   const config = await api('/api/config');
   state.promptSettings = await api('/api/prompt-settings');
   state.defaultPrompt = config.prompt;
+  state.characterPrompt = '';
+  state.characterPromptBaseline = '';
+  state.dressPrompt = state.defaultPrompt;
+  state.dressPromptBaseline = state.defaultPrompt;
   state.prompt = state.defaultPrompt;
-  state.promptBaseline = config.prompt;
+  state.promptBaseline = state.defaultPrompt;
   state.seed = config.seed ?? 0;
   route();
 })();
