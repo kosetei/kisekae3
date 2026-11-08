@@ -74,7 +74,7 @@ a { color: var(--link); }
   grid-template-columns: repeat(auto-fill, minmax(var(--character-grid-min-width), 1fr));
   grid-auto-flow: row dense;
   grid-auto-rows: 1px;
-  gap: 12px;
+  gap: 3px;
 }
 .character-grid .character-card {
   min-width: 0;
