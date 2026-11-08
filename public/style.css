@@ -69,16 +69,19 @@ a { color: var(--link); }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
 .character-grid {
-  columns: 220px;
-  column-gap: 12px;
+  --character-grid-min-width: 220px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--character-grid-min-width), 1fr));
+  grid-auto-flow: row dense;
+  grid-auto-rows: 8px;
+  gap: 12px;
 }
 .character-grid .character-card {
-  display: inline-block;
-  width: 100%;
-  margin: 0 0 12px;
+  min-width: 0;
+  align-self: start;
+  margin: 0;
   padding: 0;
   overflow: hidden;
-  break-inside: avoid;
 }
 .character-grid .character-card img {
   display: block;
@@ -91,25 +94,19 @@ a { color: var(--link); }
 }
 .character-grid.is-cover,
 .character-grid.is-contain {
-  display: grid;
+  grid-auto-rows: auto;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 12px;
-}
-.character-grid.is-cover .character-card,
-.character-grid.is-contain .character-card {
-  display: block;
-  margin: 0;
 }
 .character-grid.is-cover .character-card img,
 .character-grid.is-contain .character-card img {
   height: 250px;
   background: var(--surface-muted);
+  border-radius: 6px;
 }
 .character-grid.is-cover .character-card img {
   object-fit: cover;
 }
 .character-grid.is-contain .character-card img { object-fit: contain; }
-}
 .character-list-toolbar, .character-pagination {
   display: flex;
   align-items: center;
@@ -497,8 +494,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   header h1 { font-size: 16px; }
   .theme-toggle { margin-left: auto; padding: 6px 8px; font-size: 12px; }
   .home-page { padding: 12px; }
-  .character-grid { columns: 2; column-gap: 8px; }
-  .character-grid .character-card { margin-bottom: 8px; }
+  .character-grid {
+    --character-grid-min-width: 0px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
   .character-grid.is-cover,
   .character-grid.is-contain { gap: 8px; }
   .character-page { padding: 0; }

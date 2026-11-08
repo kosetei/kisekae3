@@ -1,6 +1,7 @@
 const app = document.getElementById('app');
 const themeToggle = document.getElementById('theme-toggle');
 const savedCharacterLayout = localStorage.getItem('kisekae3-character-layout');
+let characterGridResizeObserver = null;
 const state = {
   catalog: null,
   selectedCatalogItems: { character: new Set(), clothes: new Set() },
@@ -317,6 +318,45 @@ function renderCharacterList() {
       ${renderCatalogOrganizer('character', state.catalog.characters, state.catalog.groups.characters)}
       ${renderCatalogOrganizer('clothes', state.catalog.clothes, state.catalog.groups.clothes)}
     </details>`;
+
+  characterGridResizeObserver?.disconnect();
+  const characterGrid = app.querySelector('.character-grid:not(.is-cover):not(.is-contain)');
+  if (characterGrid) {
+    const updateMasonry = () => {
+      const { gridAutoRows, rowGap } = getComputedStyle(characterGrid);
+      const rowHeight = parseFloat(gridAutoRows);
+      const gap = parseFloat(rowGap);
+      if (!Number.isFinite(rowHeight) || rowHeight <= 0 || !Number.isFinite(gap)) return;
+      characterGrid.querySelectorAll('.character-card').forEach((card) => {
+        const image = card.querySelector('img');
+        const imageHeight = image
+          ? image.naturalWidth && image.naturalHeight
+            ? image.getBoundingClientRect().width * image.naturalHeight / image.naturalWidth
+            : image.getBoundingClientRect().height
+          : card.querySelector('.noimg')?.getBoundingClientRect().height || 0;
+        const metaHeight = card.querySelector('.meta')?.getBoundingClientRect().height || 0;
+        const styles = getComputedStyle(card);
+        const borders = parseFloat(styles.borderTopWidth) + parseFloat(styles.borderBottomWidth);
+        const span = Math.ceil((imageHeight + metaHeight + borders + gap) / (rowHeight + gap));
+        card.style.gridRowEnd = `span ${Math.max(1, span)}`;
+      });
+    };
+    characterGrid.querySelectorAll('img').forEach((image) => {
+      image.addEventListener('load', updateMasonry, { once: true });
+    });
+    requestAnimationFrame(updateMasonry);
+    const previousWidths = new WeakMap();
+    characterGridResizeObserver = new ResizeObserver((entries) => {
+      const widthChanged = entries.some(({ target, contentRect }) => {
+        const previousWidth = previousWidths.get(target);
+        previousWidths.set(target, contentRect.width);
+        return previousWidth !== undefined && previousWidth !== contentRect.width;
+      });
+      if (widthChanged) updateMasonry();
+    });
+    characterGrid.querySelectorAll('.character-card').forEach((card) => characterGridResizeObserver.observe(card));
+    characterGridResizeObserver.observe(characterGrid);
+  }
 
   app.querySelector('#character-sort')?.addEventListener('change', (event) => {
     state.characterSort = event.currentTarget.value;
