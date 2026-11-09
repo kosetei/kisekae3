@@ -229,7 +229,8 @@ function readCatalogMetadata() {
     for (const [id, item] of Object.entries(items)) {
       if (!isCatalogItemId(id) || !item || typeof item !== 'object' || Array.isArray(item)
         || typeof item.alias !== 'string' || typeof item.group !== 'string'
-        || item.alias.length > 100 || item.group.length > 100) {
+        || item.alias.length > 100 || item.group.length > 100
+        || (item.variantOf !== undefined && !isCatalogItemId(item.variantOf))) {
         throw new Error('Invalid catalog metadata');
       }
     }
@@ -267,21 +268,43 @@ function scanCatalog() {
   const generatedPreferences = readGeneratedPreferences();
   const metadata = readCatalogMetadata();
 
-  const clothes = [];
+  const clothingImages = [];
   if (fs.existsSync(clothesDir)) {
     for (const f of fs.readdirSync(clothesDir)) {
       if (!fs.statSync(path.join(clothesDir, f)).isFile() || !isImage(f)) continue;
       const id = path.basename(f, path.extname(f));
       if (!isCatalogItemId(id)) continue;
-      clothes.push({
+      clothingImages.push({
         id,
         name: metadata.clothes[id]?.alias || id.slice(0, 100),
         group: metadata.clothes[id]?.group || '',
+        variantOf: metadata.clothes[id]?.variantOf || null,
         url: `/store/clothes/${encodeURIComponent(f)}`,
       });
     }
   }
-  clothes.sort((a, b) => naturalSort(a.id, b.id));
+  clothingImages.sort((a, b) => naturalSort(a.id, b.id));
+  const clothingById = new Map(clothingImages.map((item) => [item.id, item]));
+  const clothingGroups = new Map();
+  for (const image of clothingImages) {
+    const declaredOutfit = metadata.clothes[image.id]?.variantOf;
+    const outfitId = declaredOutfit && clothingById.has(declaredOutfit) ? declaredOutfit : image.id;
+    if (!clothingGroups.has(outfitId)) clothingGroups.set(outfitId, []);
+    clothingGroups.get(outfitId).push(image);
+  }
+  const clothes = [...clothingGroups.entries()].map(([id, variants]) => {
+    const primary = variants.find((variant) => variant.id === id) || variants[0];
+    const outfitVariants = variants.map((variant) => ({
+      id: variant.id,
+      name: variant.name,
+      url: variant.url,
+    }));
+    return {
+      ...primary,
+      id: primary.id,
+      variants: outfitVariants,
+    };
+  }).sort((a, b) => naturalSort(a.id, b.id));
 
   const characters = [];
   if (fs.existsSync(charactersDir)) {
@@ -300,9 +323,12 @@ function scanCatalog() {
       const gdir = path.join(generatedDir, id);
       const generated = {};
       for (const dress of clothes) {
-        const primaryFile = generatedPreferences[id]?.[dress.id];
-        generated[dress.id] = generatedFiles(gdir, dress.id)
-          .sort((a, b) => Number(b.file === primaryFile) - Number(a.file === primaryFile))
+        const variantIds = [dress.id, ...dress.variants.map((variant) => variant.id).filter((variantId) => variantId !== dress.id)];
+        const primaryFile = variantIds.map((variantId) => generatedPreferences[id]?.[variantId]).find(Boolean);
+        generated[dress.id] = [...new Map(variantIds.flatMap((variantId) => generatedFiles(gdir, variantId))
+          .map((image) => [image.file, image])).values()]
+          .sort((a, b) => Number(b.file === primaryFile) - Number(a.file === primaryFile)
+            || b.createdAt.localeCompare(a.createdAt))
           .map(({ file, createdAt }) => ({
             file,
             url: `/store/generated/${id}/${encodeURIComponent(file)}`,
@@ -324,6 +350,7 @@ function scanCatalog() {
 
   return {
     clothes,
+    clothingImages,
     characters,
     groups: {
       characters: metadata.characterGroups,
@@ -424,7 +451,35 @@ function writePromptSettings(settings) {
 function findGeneratedImage(character, dress, file) {
   const generatedDir = path.join(STORE_DIR, 'generated', character);
   if (typeof file !== 'string' || path.basename(file) !== file) return null;
-  return generatedFiles(generatedDir, dress).find((image) => image.file === file) ?? null;
+  return generatedFilesForOutfit(generatedDir, dress).find((image) => image.file === file) ?? null;
+}
+
+function generatedFilesForOutfit(generatedDir, dressId) {
+  const variantIds = clothingVariantIds(dressId);
+  return [...new Map(variantIds.flatMap((variantId) => generatedFiles(generatedDir, variantId))
+    .map((image) => [image.file, image])).values()]
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+function clothingVariantIds(dressId) {
+  const clothesDir = path.join(STORE_DIR, 'clothes');
+  const metadata = readCatalogMetadata();
+  const existingIds = fs.existsSync(clothesDir)
+    ? fs.readdirSync(clothesDir)
+      .filter((file) => fs.statSync(path.join(clothesDir, file)).isFile() && isImage(file))
+      .map((file) => path.basename(file, path.extname(file)))
+    : [];
+  const rootId = metadata.clothes[dressId]?.variantOf || dressId;
+  const variants = existingIds.filter((id) => (
+    id === rootId || metadata.clothes[id]?.variantOf === rootId
+  ));
+  return variants.includes(dressId) ? [dressId, ...variants.filter((id) => id !== dressId)] : [dressId];
+}
+
+function generatedImageOwner(character, dressId, file) {
+  const ids = clothingVariantIds(dressId);
+  const generatedDir = path.join(STORE_DIR, 'generated', character);
+  return ids.find((id) => generatedFiles(generatedDir, id).some((image) => image.file === file)) || dressId;
 }
 
 function validateGeneratedImageRequest(body) {
@@ -447,6 +502,8 @@ function handleGeneratedSelection(res, body) {
 
   const preferences = readGeneratedPreferences();
   preferences[request.character] ??= {};
+  const owner = generatedImageOwner(request.character, request.dress, request.file);
+  preferences[request.character][owner] = request.file;
   preferences[request.character][request.dress] = request.file;
   writeGeneratedPreferences(preferences);
   return json(res, 200, { character: request.character, dress: request.dress, file: request.file });
@@ -461,16 +518,23 @@ function handleDeleteGeneratedImage(res, body) {
 
   const preferences = readGeneratedPreferences();
   const metadata = readGeneratedMetadata();
+  const owner = generatedImageOwner(request.character, request.dress, request.file);
   fs.unlinkSync(path.join(STORE_DIR, 'generated', request.character, request.file));
-  if (preferences[request.character]?.[request.dress] === request.file) {
-    delete preferences[request.character][request.dress];
+  let preferencesChanged = false;
+  for (const variantId of clothingVariantIds(request.dress)) {
+    if (preferences[request.character]?.[variantId] === request.file) {
+      delete preferences[request.character][variantId];
+      preferencesChanged = true;
+    }
+  }
+  if (preferencesChanged) {
     if (!Object.keys(preferences[request.character]).length) delete preferences[request.character];
     writeGeneratedPreferences(preferences);
   }
-  const imageMetadata = metadata[request.character]?.[request.dress];
+  const imageMetadata = metadata[request.character]?.[owner];
   if (imageMetadata?.[request.file]) {
     delete imageMetadata[request.file];
-    if (!Object.keys(imageMetadata).length) delete metadata[request.character][request.dress];
+    if (!Object.keys(imageMetadata).length) delete metadata[request.character][owner];
     if (!Object.keys(metadata[request.character]).length) delete metadata[request.character];
     writeGeneratedMetadata(metadata);
   }
@@ -487,7 +551,10 @@ function handleGetGeneratedSettings(res, query) {
   if (!findGeneratedImage(request.character, request.dress, request.file)) {
     return json(res, 404, { error: 'generated image not found' });
   }
-  const settings = readGeneratedMetadata()[request.character]?.[request.dress]?.[request.file];
+  const metadata = readGeneratedMetadata();
+  const owner = generatedImageOwner(request.character, request.dress, request.file);
+  const settings = metadata[request.character]?.[request.dress]?.[request.file]
+    ?? metadata[request.character]?.[owner]?.[request.file];
   return json(res, 200, settings ?? {
     prompt: null,
     characterPrompt: null,
@@ -502,9 +569,12 @@ function handleGetGeneratedSettings(res, query) {
 // ---------------------------------------------------------------------------
 
 async function handleGenerate(res, body) {
-  const { character, dress, prompt, characterPrompt, dressPrompt, seed, force, disableLora } = body ?? {};
+  const { character, dress, dressVariant, prompt, characterPrompt, dressPrompt, seed, force, disableLora } = body ?? {};
   if (!SAFE_ID.test(character ?? '') || !SAFE_ID.test(dress ?? '')) {
     return json(res, 400, { error: 'character/dress id must be alphanumeric' });
+  }
+  if (dressVariant !== undefined && !SAFE_ID.test(dressVariant ?? '')) {
+    return json(res, 400, { error: 'dressVariant id must be alphanumeric' });
   }
   if (prompt !== undefined && (typeof prompt !== 'string' || prompt.length > 10000)) {
     return json(res, 400, { error: 'prompt must be a string of 10000 characters or fewer' });
@@ -541,10 +611,14 @@ async function handleGenerate(res, body) {
   const characterImage = findCharacterImage(charactersDir, character);
   if (!characterImage) return json(res, 404, { error: `character image not found: ${character}` });
 
-  const dressFile = fs.readdirSync(clothesDir).find((f) => isImage(f) && path.basename(f, path.extname(f)) === dress);
+  const selectedVariant = dressVariant ?? dress;
+  if (selectedVariant !== dress && !clothingVariantIds(dress).includes(selectedVariant)) {
+    return json(res, 400, { error: 'dressVariant must belong to the selected outfit' });
+  }
+  const dressFile = fs.readdirSync(clothesDir).find((f) => isImage(f) && path.basename(f, path.extname(f)) === selectedVariant);
   if (!dressFile) return json(res, 404, { error: `dress not found: ${dress}` });
 
-  const versions = generatedFiles(generatedDir, dress);
+  const versions = generatedFilesForOutfit(generatedDir, dress);
   const preferredFile = readGeneratedPreferences()[character]?.[dress];
   const existing = !force
     ? versions.find((version) => version.file === preferredFile) ?? versions[0] ?? null
@@ -566,7 +640,7 @@ async function handleGenerate(res, body) {
     outDir: generatedDir,
     characterId: character,
     dressId: dress,
-    outputStem: `${dress}__${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`,
+    outputStem: `${selectedVariant}__${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`,
     prompt: actualPrompt,
     seed: actualSeed ?? undefined,
     force,
@@ -575,8 +649,8 @@ async function handleGenerate(res, body) {
 
   const generatedMetadata = readGeneratedMetadata();
   generatedMetadata[character] ??= {};
-  generatedMetadata[character][dress] ??= {};
-  generatedMetadata[character][dress][result.file] = {
+  generatedMetadata[character][selectedVariant] ??= {};
+  generatedMetadata[character][selectedVariant][result.file] = {
     prompt: actualPrompt,
     characterPrompt: actualCharacterPrompt,
     dressPrompt: actualDressPrompt,
@@ -666,7 +740,7 @@ function handleUpload(res, body) {
   if (requestedAlias?.trim()) {
     try {
       const metadata = readCatalogMetadata();
-      metadata[dirName][id] = { alias: requestedAlias.trim(), group: '' };
+      metadata[dirName][id] = { ...metadata[dirName][id], alias: requestedAlias.trim(), group: '' };
       writeCatalogMetadata(metadata);
     } catch (error) {
       fs.unlinkSync(path.join(targetDir, file));
@@ -694,7 +768,7 @@ function handleCatalogItem(res, body) {
     return json(res, 404, { error: `Catalog item not found: ${id}` });
   }
   const metadata = readCatalogMetadata();
-  metadata[dirName][id] = { alias: alias.trim(), group: group.trim() };
+  metadata[dirName][id] = { ...metadata[dirName][id], alias: alias.trim(), group: group.trim() };
   const groupsKey = type === 'character' ? 'characterGroups' : 'clothesGroups';
   if (group.trim() && !metadata[groupsKey].includes(group.trim())) {
     metadata[groupsKey].push(group.trim());
@@ -737,13 +811,54 @@ function handleCatalogItems(res, body) {
   for (const { id, alias } of items) {
     const previousGroup = metadata[dirName][id]?.group || '';
     if (previousGroup !== normalizedGroup) movedItems += 1;
-    metadata[dirName][id] = { alias: alias.trim(), group: normalizedGroup };
+    metadata[dirName][id] = { ...metadata[dirName][id], alias: alias.trim(), group: normalizedGroup };
   }
   if (normalizedGroup && !metadata[groupsKey].includes(normalizedGroup)) {
     metadata[groupsKey].push(normalizedGroup);
   }
   writeCatalogMetadata(metadata);
   return json(res, 200, { movedItems, ids: items.map((item) => item.id) });
+}
+
+function handleClothingVariants(res, body) {
+  const { ids, outfitId } = body ?? {};
+  if (!Array.isArray(ids) || ids.length < 1 || ids.length > 500
+    || ids.some((id) => !isCatalogItemId(id)) || new Set(ids).size !== ids.length
+    || !(outfitId === null || isCatalogItemId(outfitId))) {
+    return json(res, 400, { error: 'ids must contain unique clothing IDs and outfitId must be a clothing ID or null' });
+  }
+  if (outfitId !== null && ids.length < 2) {
+    return json(res, 400, { error: 'At least two clothing IDs are required to create variants' });
+  }
+  const metadata = readCatalogMetadata();
+  const clothesDir = path.join(STORE_DIR, 'clothes');
+  if (ids.some((id) => !identifierExists(clothesDir, id))) {
+    return json(res, 404, { error: 'One or more clothing images were not found' });
+  }
+
+  const selectedGroups = new Set(ids.map((id) => metadata.clothes[id]?.variantOf || id));
+  const affectedIds = fs.readdirSync(clothesDir)
+    .filter((file) => isImage(file))
+    .map((file) => path.basename(file, path.extname(file)))
+    .filter((id) => selectedGroups.has(metadata.clothes[id]?.variantOf || id));
+  if (outfitId !== null && !ids.includes(outfitId)) {
+    return json(res, 400, { error: 'outfitId must be one of the selected clothing IDs' });
+  }
+  const normalizedOutfitId = outfitId === null ? null : outfitId;
+  const outfitGroup = normalizedOutfitId ? metadata.clothes[normalizedOutfitId]?.group || '' : '';
+  for (const id of affectedIds) {
+    const item = metadata.clothes[id] ?? { alias: id.slice(0, 100), group: '' };
+    if (normalizedOutfitId) {
+      item.group = outfitGroup;
+      if (id !== normalizedOutfitId) item.variantOf = normalizedOutfitId;
+      else delete item.variantOf;
+    } else {
+      delete item.variantOf;
+    }
+    metadata.clothes[id] = item;
+  }
+  writeCatalogMetadata(metadata);
+  return json(res, 200, { ids: affectedIds, outfitId: normalizedOutfitId });
 }
 
 function handleCatalogGroup(res, body) {
@@ -883,6 +998,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname === '/api/catalog-items' && req.method === 'PUT') {
       return handleCatalogItems(res, await readBody(req));
+    }
+    if (pathname === '/api/clothing-variants' && req.method === 'PUT') {
+      return handleClothingVariants(res, await readBody(req));
     }
     if (pathname === '/api/catalog-group' && req.method === 'POST') {
       return handleCatalogGroup(res, await readBody(req));

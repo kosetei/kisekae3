@@ -21,6 +21,7 @@ const state = {
   dressFolder: '',
   currentCharacter: null, // char id when on character view
   selectedDress: null,    // dress id on character view
+  selectedDressVariants: {},
   selectedGenerated: {},  // selected generated image URL per dress
   imageManagerOpen: false,
   imageActionBusy: false,
@@ -113,6 +114,14 @@ function chooseRandomCharacters(characters, count) {
 
 function generatedVersions(char, dressId) {
   return char.generated[dressId] || [];
+}
+
+function selectedDressVariant(dressId) {
+  const outfit = state.catalog.clothes.find((dress) => dress.id === dressId);
+  const selectedId = state.selectedDressVariants[dressId];
+  return outfit?.variants.some((variant) => variant.id === selectedId)
+    ? selectedId
+    : outfit?.variants[0]?.id || dressId;
 }
 
 function promptSettingsForDress(dressId) {
@@ -315,9 +324,9 @@ function renderCharacterList() {
     </details>
     <details class="catalog-clothes catalog-editor">
       <summary>登録済みデータの表示名・フォルダを編集</summary>
-      <p class="hint">画像または左上のチェックで複数選択し、選択項目のつまみ（⠿）をフォルダへドラッグするとまとめて移動します。</p>
+      <p class="hint">画像またはチェックで複数選択できます。名前は画像を右クリックするか「名前」から編集できます。選択項目のつまみ（⠿）をフォルダへドラッグするとまとめて移動します。</p>
       ${renderCatalogOrganizer('character', state.catalog.characters, state.catalog.groups.characters)}
-      ${renderCatalogOrganizer('clothes', state.catalog.clothes, state.catalog.groups.clothes)}
+      ${renderCatalogOrganizer('clothes', state.catalog.clothingImages, state.catalog.groups.clothes)}
     </details>`;
 
   characterGridResizeObserver?.disconnect();
@@ -395,10 +404,16 @@ function renderCharacterList() {
     form.addEventListener('submit', uploadImage);
   });
   app.querySelectorAll('.catalog-edit-form').forEach((form) => {
-    form.addEventListener('submit', saveCatalogItem);
+    form.addEventListener('contextmenu', renameCatalogItem);
+  });
+  app.querySelectorAll('[data-rename-catalog-item]').forEach((button) => {
+    button.addEventListener('click', renameCatalogItem);
   });
   app.querySelectorAll('.catalog-item-select').forEach((checkbox) => {
     checkbox.addEventListener('change', updateCatalogSelection);
+  });
+  app.querySelectorAll('[data-clothing-variants]').forEach((button) => {
+    button.addEventListener('click', saveCatalogVariants);
   });
   app.querySelectorAll('.catalog-thumbnail-select').forEach((button) => {
     button.addEventListener('click', () => {
@@ -513,7 +528,11 @@ function renderCatalogOrganizer(type, items, declaredGroups) {
         <button type="submit">フォルダを作成</button>
         <span class="upload-status" role="status"></span>
       </form>
-      <p class="catalog-selection-status" data-type="${type}" role="status">チェックで複数選択し、選択項目のつまみをドラッグするとまとめて移動できます。</p>
+      <div class="catalog-selection-actions">
+        <p class="catalog-selection-status" data-type="${type}" role="status">チェックで複数選択し、選択項目のつまみをドラッグするとまとめて移動できます。</p>
+        ${type === 'clothes' ? `<button type="button" data-clothing-variants="group" ${state.selectedCatalogItems.clothes.size < 2 ? 'disabled' : ''}>選択した服をバリエーションとしてまとめる</button>
+          <button type="button" data-clothing-variants="ungroup" ${state.selectedCatalogItems.clothes.size < 1 ? 'disabled' : ''}>選択した服のバリエーションを解除</button>` : ''}
+      </div>
       ${renderFolderPicker(groupedItems, activeGroup, 'organizer', type)}
       ${activeGroup === null
         ? '<p class="empty">フォルダをクリックすると中身を表示します。選択した項目は上のフォルダアイコンへドラッグして移動できます。</p>'
@@ -537,10 +556,12 @@ function renderCatalogOrganizer(type, items, declaredGroups) {
                     aria-label="${esc(item.name)}を選択" aria-pressed="${state.selectedCatalogItems[type].has(item.id)}">
                     <img class="catalog-edit-thumbnail" src="${item.iconUrl || item.url}" alt="" loading="lazy" />
                   </button>
-                  <span class="catalog-id">${typeName} · ${esc(item.id)}</span>
-                  <input name="alias" type="text" maxlength="100" value="${esc(item.name)}" aria-label="表示名" />
-                  <button type="submit">保存</button>
-                  <span class="upload-status" role="status"></span>
+                  <div class="catalog-item-details">
+                    <span class="catalog-id">${typeName} · ${esc(item.id)}${type === 'clothes' && item.variantOf ? ' · バリエーション' : ''}</span>
+                    <strong class="catalog-item-name">${esc(item.name)}</strong>
+                    <button type="button" data-rename-catalog-item>名前</button>
+                    <span class="upload-status" role="status"></span>
+                  </div>
                 </form>`).join('') : '<p class="empty">このフォルダは空です。</p>'}
             </div>
           </section>`}
@@ -599,7 +620,10 @@ async function dropCatalogItem(event) {
     `.catalog-edit-form[data-type="${dragged.type}"][data-id="${CSS.escape(id)}"]`,
   ));
   if (forms.some((form) => !form)) return;
-  const items = forms.map((form) => ({ id: form.dataset.id, alias: form.elements.alias.value }));
+  const items = forms.map((form) => ({
+    id: form.dataset.id,
+    alias: form.querySelector('.catalog-item-name').textContent,
+  }));
 
   try {
     const result = await api('/api/catalog-items', {
@@ -639,6 +663,44 @@ function updateCatalogSelection(event) {
       ? `${selected.size}件を選択中。選択項目のつまみをドラッグして移動できます。`
       : 'チェックで複数選択し、選択項目のつまみをドラッグするとまとめて移動できます。';
   }
+  app.querySelectorAll('[data-clothing-variants]').forEach((button) => {
+    const clothingSelectionCount = state.selectedCatalogItems.clothes.size;
+    button.disabled = button.dataset.clothingVariants === 'group' ? clothingSelectionCount < 2 : clothingSelectionCount < 1;
+  });
+}
+
+async function saveCatalogVariants(event) {
+  const button = event.currentTarget;
+  const ids = [...state.selectedCatalogItems.clothes];
+  if (button.dataset.clothingVariants === 'group' && ids.length < 2) return;
+  if (!ids.length) return;
+  const outfitId = button.dataset.clothingVariants === 'ungroup' ? null : ids[0];
+  button.disabled = true;
+  const status = app.querySelector('.catalog-organizer[data-type="clothes"] .catalog-group-status');
+  if (status) status.textContent = outfitId ? 'バリエーションをまとめています…' : 'バリエーションを解除しています…';
+  try {
+    const result = await api('/api/clothing-variants', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids, outfitId }),
+    });
+    state.selectedCatalogItems.clothes.clear();
+    await refreshCatalog();
+    renderCharacterList();
+    const editor = app.querySelector('.catalog-editor');
+    if (editor) editor.open = true;
+    const groupEditor = app.querySelector('.catalog-organizer[data-type="clothes"]');
+    if (groupEditor) groupEditor.open = true;
+    const resultStatus = app.querySelector('.catalog-organizer[data-type="clothes"] .catalog-group-status');
+    if (resultStatus) {
+      resultStatus.textContent = outfitId
+        ? `${result.ids.length}枚を同じ服のバリエーションとしてまとめました`
+        : `${result.ids.length}枚のバリエーションを解除しました`;
+    }
+  } catch (error) {
+    if (status) status.textContent = `バリエーション設定失敗: ${error.message}`;
+    if (button.isConnected) button.disabled = false;
+  }
 }
 
 function renderCharacterView() {
@@ -654,7 +716,9 @@ function renderCharacterView() {
   app.dataset.character = char.id;
 
   const sel = state.selectedDress;
-  const selectedDressName = state.catalog.clothes.find((dress) => dress.id === sel)?.name || sel;
+  const selectedOutfit = state.catalog.clothes.find((dress) => dress.id === sel);
+  const selectedDressName = selectedOutfit?.name || sel;
+  const selectedVariantId = selectedDressVariant(sel);
   const versions = sel ? generatedVersions(char, sel) : [];
   const selected = sel ? selectedVersion(char, sel) : null;
   const selUrl = selected?.url || null;
@@ -714,7 +778,17 @@ function renderCharacterView() {
         <div class="dress-folder-picker">${renderFolderPicker(dressFolders, state.dressFolder, 'dress')}</div>
         ${sel ? `<p class="stage-caption">
           選択中の服: ${selUrl ? `生成済み (${versions.length}件)` : '未生成'}
-        </p>` : ''}
+        </p>
+        ${selectedOutfit?.variants.length > 1 ? `<fieldset class="dress-variant-picker">
+          <legend>生成に使う画像</legend>
+          <div class="dress-variant-grid">${selectedOutfit.variants.map((variant) => `
+            <label class="dress-variant ${selectedVariantId === variant.id ? 'selected' : ''}">
+              <input type="radio" name="dress-variant" value="${esc(variant.id)}" ${selectedVariantId === variant.id ? 'checked' : ''} />
+              <img src="${variant.url}" alt="" loading="lazy" />
+              <span>${esc(variant.name)}</span>
+            </label>`).join('')}</div>
+          <p class="hint">着せ替え上は同じ服として扱い、画像は生成・再生成時にだけ使われます。</p>
+        </fieldset>` : ''}` : ''}
       </section>
     </div>
 
@@ -909,6 +983,12 @@ function renderCharacterView() {
   app.querySelectorAll('button.dress').forEach((btn) => {
     btn.addEventListener('click', () => selectDress(btn.dataset.dress));
   });
+  app.querySelectorAll('input[name="dress-variant"]').forEach((input) => {
+    input.addEventListener('change', (event) => {
+      state.selectedDressVariants[sel] = event.currentTarget.value;
+      renderCharacterView();
+    });
+  });
   app.querySelectorAll('.catalog-folder[data-folder-view="dress"]').forEach((button) => {
     button.addEventListener('click', selectCatalogFolder);
   });
@@ -964,12 +1044,12 @@ function renderCharacterView() {
   if (allBtn && !allBtn.disabled) allBtn.addEventListener('click', generateAll);
   const regenerateBtn = document.getElementById('regenerate-selected');
   if (regenerateBtn && !regenerateBtn.disabled) {
-    regenerateBtn.addEventListener('click', () => generate(char, sel, true));
+    regenerateBtn.addEventListener('click', () => generate(char, sel, true, null, selectedVariantId));
   }
   const generateSelectedBtn = document.getElementById('generate-selected');
   if (generateSelectedBtn) {
     generateSelectedBtn.disabled = state.busy;
-    generateSelectedBtn.addEventListener('click', () => generate(char, sel));
+    generateSelectedBtn.addEventListener('click', () => generate(char, sel, false, null, selectedVariantId));
   }
 }
 
@@ -1090,7 +1170,9 @@ function transitionStageImage(src, alt) {
 async function selectDress(dressId) {
   if (dressId === state.selectedDress) {
     const char = findCharacter(state.currentCharacter);
-    if (!generatedVersions(char, dressId).length) await generate(char, dressId);
+    if (!generatedVersions(char, dressId).length) {
+      await generate(char, dressId, false, null, selectedDressVariant(dressId));
+    }
     return;
   }
   if (!await confirmPromptSaveBeforeLeaving()) {
@@ -1412,7 +1494,7 @@ async function deletePromptPreset(scope) {
   }
 }
 
-async function generate(char, dressId, force = false, promptParts = null) {
+async function generate(char, dressId, force = false, promptParts = null, dressVariantId = null) {
   if (state.busy) return;
   const seed = Number(state.seed);
   if (!Number.isSafeInteger(seed) || seed < 0) {
@@ -1431,6 +1513,7 @@ async function generate(char, dressId, force = false, promptParts = null) {
       body: JSON.stringify({
         character: char.id,
         dress: dressId,
+        dressVariant: dressVariantId || selectedDressVariant(dressId),
         prompt,
         characterPrompt,
         dressPrompt,
@@ -1475,7 +1558,7 @@ async function generateAll() {
     await generate(char, d.id, false, {
       characterPrompt: state.characterPrompt,
       dressPrompt: promptForSettings(promptSettingsForDress(d.id), state.dressPrompt),
-    });
+    }, d.variants?.[0]?.id || d.id);
   }
 }
 
@@ -1573,23 +1656,33 @@ async function uploadImage(event) {
   }
 }
 
-async function saveCatalogItem(event) {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const button = form.querySelector('button[type="submit"]');
+async function renameCatalogItem(event) {
+  if (event.type === 'contextmenu') event.preventDefault();
+  const form = event.currentTarget.matches('.catalog-edit-form')
+    ? event.currentTarget
+    : event.currentTarget.closest('.catalog-edit-form');
+  if (!form) return;
+  const items = form.dataset.type === 'character' ? state.catalog.characters : state.catalog.clothingImages;
+  const currentItem = items.find((item) => item.id === form.dataset.id);
+  if (!currentItem) return;
+  const alias = window.prompt('表示名を入力してください', currentItem.name);
+  if (alias === null) return;
+  if (alias.length > 100) {
+    form.querySelector('.upload-status').textContent = '名前は100文字以内にしてください';
+    return;
+  }
+  const button = form.querySelector('[data-rename-catalog-item]');
   const status = form.querySelector('.upload-status');
   button.disabled = true;
   status.textContent = '保存中…';
   try {
-    const items = form.dataset.type === 'character' ? state.catalog.characters : state.catalog.clothes;
-    const currentItem = items.find((item) => item.id === form.dataset.id);
     await api('/api/catalog-item', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         type: form.dataset.type,
         id: form.dataset.id,
-        alias: form.elements.alias.value,
+        alias,
         group: currentItem?.group || '',
       }),
     });
@@ -1600,10 +1693,10 @@ async function saveCatalogItem(event) {
     if (savedForm) {
       const details = savedForm.closest('details');
       if (details) details.open = true;
-      savedForm.querySelector('.upload-status').textContent = '保存しました';
+      savedForm.querySelector('.upload-status').textContent = '名前を保存しました';
     }
   } catch (error) {
-    if (status.isConnected) status.textContent = `保存失敗: ${error.message}`;
+    if (status.isConnected) status.textContent = `名前の保存失敗: ${error.message}`;
   } finally {
     if (button.isConnected) button.disabled = false;
   }
