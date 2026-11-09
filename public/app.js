@@ -269,6 +269,11 @@ function renderCharacterList() {
     </a>`).join('');
   const clothes = visibleClothes.map((d) => `
     <div class="card small"><img src="${d.url}" alt="${esc(d.name)}" loading="lazy" /><div class="meta"><strong>${esc(d.name)}</strong></div></div>`).join('');
+  const paginationNav = (bottom) => pageCount > 1 ? `<nav class="character-pagination${bottom ? ' character-pagination-bottom' : ''}" aria-label="キャラ一覧のページ">
+    <button type="button" data-character-page="${state.characterPage - 1}" ${state.characterPage === 1 ? 'disabled' : ''}>前へ</button>
+    <span>${state.characterPage} / ${pageCount}ページ</span>
+    <button type="button" data-character-page="${state.characterPage + 1}" ${state.characterPage === pageCount ? 'disabled' : ''}>次へ</button>
+  </nav>` : '';
   const characterListControls = (state.randomFolderActive || state.catalogFolders.characters !== null) && visibleCharacters.length
     ? `<div class="character-list-toolbar">
         <label for="character-layout">画像表示</label>
@@ -285,11 +290,7 @@ function renderCharacterList() {
         </select>
         <span class="character-list-count">${visibleCharacters.length}キャラ</span>
       </div>
-      ${pageCount > 1 ? `<nav class="character-pagination" aria-label="キャラ一覧のページ">
-        <button type="button" data-character-page="${state.characterPage - 1}" ${state.characterPage === 1 ? 'disabled' : ''}>前へ</button>
-        <span>${state.characterPage} / ${pageCount}ページ</span>
-        <button type="button" data-character-page="${state.characterPage + 1}" ${state.characterPage === pageCount ? 'disabled' : ''}>次へ</button>
-      </nav>` : ''}`
+      ${paginationNav(false)}`
     : '';
   app.innerHTML = `
     <h2>キャラを選ぶ</h2>
@@ -297,7 +298,7 @@ function renderCharacterList() {
       ${renderFolderPicker(characterFolders, state.catalogFolders.characters, 'characters', 'characters', true, state.randomFolderActive)}
       ${!state.randomFolderActive && state.catalogFolders.characters === null
         ? '<p class="empty">フォルダを選ぶと中身が表示されます。</p>'
-        : visibleCharacters.length ? `${characterListControls}<div class="character-grid ${state.characterLayout === 'masonry' ? '' : `is-${state.characterLayout}`}">${cards}</div>` : '<p class="empty">このフォルダにキャラはいません。</p>'}`
+        : visibleCharacters.length ? `${characterListControls}<div class="character-grid ${state.characterLayout === 'masonry' ? '' : `is-${state.characterLayout}`}">${cards}</div>${paginationNav(true)}` : '<p class="empty">このフォルダにキャラはいません。</p>'}`
       : '<p class="empty">store/characters/ に chara1.png のような画像を追加してください。</p>'}
     <details class="upload-section">
       <summary>キャラ・服を追加</summary>
