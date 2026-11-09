@@ -25,6 +25,7 @@ const state = {
   organizerFolders: { character: '', clothes: '' },
   page: 'home',
   dressFolder: '',
+  dressFolderAll: false,
   dressFilter: ['all', 'generated', 'ungenerated'].includes(savedDressFilter) ? savedDressFilter : 'all',
   currentCharacter: null, // char id when on character view
   selectedDress: null,    // dress id on character view
@@ -296,7 +297,7 @@ function renderCharacterList() {
     ${renderPageNav('home')}
     <h2>キャラを選ぶ</h2>
     ${state.catalog.characters.length ? `
-      ${renderFolderPicker(characterFolders, state.catalogFolders.characters, 'characters', 'characters', true, state.randomFolderActive)}
+      ${renderFolderPicker(characterFolders, state.catalogFolders.characters, 'characters', 'characters', { random: true, randomActive: state.randomFolderActive })}
       ${!state.randomFolderActive && state.catalogFolders.characters === null
         ? '<p class="empty">フォルダを選ぶと中身が表示されます。</p>'
         : visibleCharacters.length ? `${characterListControls}<div class="character-grid ${state.characterLayout === 'masonry' ? '' : `is-${state.characterLayout}`}">${cards}</div>${paginationNav(true)}` : '<p class="empty">このフォルダにキャラはいません。</p>'}`
@@ -484,19 +485,30 @@ function wireCatalogOrganizer() {
   });
 }
 
-function renderFolderPicker(folders, activeGroup, view, type = view, includeRandom = false, randomActive = false) {
+function renderFolderPicker(folders, activeGroup, view, type = view, options = {}) {
+  const { random = false, randomActive = false, all = false, allActive = false } = options;
+  const allCount = folders.reduce((count, [, items]) => count + items.length, 0);
   return `
     <nav class="catalog-folder-picker" aria-label="フォルダ">
       ${folders.map(([group, items]) => `
-        <button type="button" class="catalog-folder ${!randomActive && activeGroup === group ? 'active' : ''}"
+        <button type="button" class="catalog-folder ${!randomActive && !allActive && activeGroup === group ? 'active' : ''}"
           data-folder-view="${view}" data-type="${type}" data-group="${esc(group)}"
           title="${esc(group || '未分類')} (${items.length})"
           aria-label="${esc(group || '未分類')}、${items.length}件"
-          aria-pressed="${!randomActive && activeGroup === group}">
+          aria-pressed="${!randomActive && !allActive && activeGroup === group}">
           <span class="catalog-folder-icon" aria-hidden="true">📁</span>
           <span class="catalog-folder-label">${esc(group || '未分類')}</span>
         </button>`).join('')}
-      ${includeRandom ? `
+      ${all ? `
+        <button type="button" class="catalog-folder ${allActive ? 'active' : ''}"
+          data-folder-view="${view}" data-type="${type}" data-all-folders="true"
+          title="全フォルダ横断 (${allCount})"
+          aria-label="全フォルダ、${allCount}件"
+          aria-pressed="${allActive}">
+          <span class="catalog-folder-icon" aria-hidden="true">🗂</span>
+          <span class="catalog-folder-label">全フォルダ</span>
+        </button>` : ''}
+      ${random ? `
         <button type="button" class="catalog-folder ${randomActive ? 'active' : ''}"
           data-folder-view="${view}" data-type="${type}" data-random-folder="true"
           title="全キャラから${Math.min(6, state.catalog.characters.length)}人をランダムに選択"
@@ -509,7 +521,7 @@ function renderFolderPicker(folders, activeGroup, view, type = view, includeRand
 }
 
 function selectCatalogFolder(event) {
-  const { folderView, type, group, randomFolder } = event.currentTarget.dataset;
+  const { folderView, type, group, randomFolder, allFolders } = event.currentTarget.dataset;
   if (folderView === 'organizer') {
     state.organizerFolders[type] = group;
     state.selectedCatalogItems[type].clear();
@@ -535,7 +547,8 @@ function selectCatalogFolder(event) {
     return;
   }
   if (folderView === 'dress') {
-    state.dressFolder = group;
+    state.dressFolderAll = allFolders === 'true';
+    if (!state.dressFolderAll) state.dressFolder = group;
     renderCharacterView();
   }
 }
@@ -750,7 +763,10 @@ function renderCharacterView() {
   }
   const missing = state.catalog.clothes.filter((d) => !generatedVersions(char, d.id).length);
   const dressFolders = groupedCatalogItems(state.catalog.clothes, state.catalog.groups.clothes);
-  const folderDresses = dressFolders.find(([group]) => group === state.dressFolder)?.[1] || [];
+  // 全フォルダモードはフォルダをまたぎ、フォルダ順のまま全服を並べる
+  const scopedDresses = state.dressFolderAll
+    ? dressFolders.flatMap(([, items]) => items)
+    : dressFolders.find(([group]) => group === state.dressFolder)?.[1] || [];
   const dressMatchesFilter = (dress) => {
     const done = generatedVersions(char, dress.id).length > 0;
     if (state.dressFilter === 'generated') return done;
@@ -758,12 +774,27 @@ function renderCharacterView() {
     return true;
   };
   // 選択中の服は条件に当てはまらない場合でも一覧に残し、現在の表示とのズレを防ぐ
-  const visibleDresses = folderDresses.filter((dress) => dress.id === sel || dressMatchesFilter(dress));
-  const folderGeneratedCount = folderDresses.filter((dress) => generatedVersions(char, dress.id).length).length;
+  const visibleDresses = scopedDresses.filter((dress) => dress.id === sel || dressMatchesFilter(dress));
+  const scopedGeneratedCount = scopedDresses.filter((dress) => generatedVersions(char, dress.id).length).length;
   const selectedOutsideFilter = sel
-    && folderDresses.some((dress) => dress.id === sel)
-    && !dressMatchesFilter(folderDresses.find((dress) => dress.id === sel));
+    && scopedDresses.some((dress) => dress.id === sel)
+    && !dressMatchesFilter(scopedDresses.find((dress) => dress.id === sel));
   const generatedTotal = versions.length;
+  const scopeLabel = state.dressFolderAll ? '全フォルダ' : 'フォルダ内';
+  const dressGridHtml = visibleDresses.length
+    ? `<div class="dress-grid">${visibleDresses.map((d) => {
+        const done = generatedVersions(char, d.id).length > 0;
+        const groupTag = state.dressFolderAll ? `<span class="dress-group-tag">${esc(d.group || '未分類')}</span>` : '';
+        return `
+        <button class="card small dress ${d.id === sel ? 'selected' : ''}" data-dress="${esc(d.id)}" aria-label="${esc(d.name)}">
+          <img src="${d.url}" alt="" loading="lazy" />
+          <div class="meta">
+            ${groupTag}
+            <span class="badge ${done ? 'done' : 'todo'}">${done ? '生成済み' : '未生成'}</span>
+          </div>
+        </button>`;
+      }).join('')}</div>`
+    : `<p class="empty">${state.dressFolderAll ? '全フォルダに' : 'このフォルダに'}表示条件に合う服はありません。</p>`;
   const stageSrc = state.stageDisplayedSrc || displaySrc;
   const dressPromptSettings = sel ? promptSettingsForDress(sel) : { source: 'shared' };
   const characterPromptSettings = state.currentCharacter ? promptSettingsForCharacter(state.currentCharacter) : { source: 'shared' };
@@ -801,24 +832,13 @@ function renderCharacterView() {
             <option value="generated" ${state.dressFilter === 'generated' ? 'selected' : ''}>生成済みだけ</option>
             <option value="ungenerated" ${state.dressFilter === 'ungenerated' ? 'selected' : ''}>未生成だけ</option>
           </select>
-          <span class="dress-filter-count">表示 ${visibleDresses.length}件 / フォルダ内 ${folderDresses.length}件（生成済み ${folderGeneratedCount}件）</span>
+          <span class="dress-filter-count">表示 ${visibleDresses.length}件 / ${scopeLabel} ${scopedDresses.length}件（生成済み ${scopedGeneratedCount}件）</span>
         </div>
         ${selectedOutsideFilter ? '<p class="hint dress-filter-hint">選択中の服は表示条件に当てはまらないため、この一覧では常に表示します。</p>' : ''}
-        ${state.dressFolder === null
+        ${state.dressFolderAll ? dressGridHtml : state.dressFolder === null
           ? '<p class="empty">フォルダを選ぶと服が表示されます。</p>'
-          : visibleDresses.length
-            ? `<div class="dress-grid">${visibleDresses.map((d) => {
-            const done = generatedVersions(char, d.id).length > 0;
-            return `
-            <button class="card small dress ${d.id === sel ? 'selected' : ''}" data-dress="${esc(d.id)}" aria-label="${esc(d.name)}">
-              <img src="${d.url}" alt="" loading="lazy" />
-              <div class="meta">
-                <span class="badge ${done ? 'done' : 'todo'}">${done ? '生成済み' : '未生成'}</span>
-              </div>
-            </button>`;
-          }).join('')}</div>`
-            : '<p class="empty">このフォルダに表示条件に合う服はありません。</p>'}
-        <div class="dress-folder-picker">${renderFolderPicker(dressFolders, state.dressFolder, 'dress')}</div>
+          : dressGridHtml}
+        <div class="dress-folder-picker">${renderFolderPicker(dressFolders, state.dressFolder, 'dress', 'dress', { all: true, allActive: state.dressFolderAll })}</div>
         ${sel ? `<p class="stage-caption">
           選択中の服: ${selUrl ? `生成済み (${versions.length}件)` : '未生成'}
         </p>

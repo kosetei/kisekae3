@@ -463,6 +463,15 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 }
 .card.dress .meta { margin-top: 3px; font-size: 11px; }
 .card.dress .meta strong { margin-bottom: 1px; overflow-wrap: anywhere; }
+.card.dress .dress-group-tag {
+  display: block;
+  margin-bottom: 1px;
+  color: var(--muted);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .card.dress.selected { outline-width: 2px; }
 .image-manager {
   margin: 12px 0;
