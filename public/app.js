@@ -3,7 +3,8 @@ const themeToggle = document.getElementById('theme-toggle');
 const pageNavLinks = [
   { key: 'home', href: '#/', label: 'キャラ一覧' },
   { key: 'clothes', href: '#/clothes', label: '服の一覧' },
-  { key: 'editor', href: '#/editor', label: '表示名・フォルダ編集' },
+  { key: 'editor-character', href: '#/editor/character', label: 'キャラ編集' },
+  { key: 'editor-clothes', href: '#/editor/clothes', label: '服編集' },
 ];
 const savedCharacterLayout = localStorage.getItem('kisekae3-character-layout');
 const savedDressFilter = localStorage.getItem('kisekae3-dress-filter');
@@ -24,6 +25,7 @@ const state = {
   randomCharacterIds: [],
   organizerFolders: { character: '', clothes: '' },
   page: 'home',
+  editorSection: 'character',
   dressFolder: '',
   dressFolderAll: false,
   dressFilter: ['all', 'generated', 'ungenerated'].includes(savedDressFilter) ? savedDressFilter : 'all',
@@ -425,14 +427,16 @@ function renderClothesPage() {
   });
 }
 
-function renderCatalogEditorPage() {
-  app.className = 'catalog-page editor-page';
+function renderCatalogEditorPage(type) {
+  const editorType = type === 'clothes' ? 'clothes' : 'character';
+  const typeName = editorType === 'character' ? 'キャラ' : '服';
+  const items = editorType === 'character' ? state.catalog.characters : state.catalog.clothingImages;
+  app.className = `catalog-page editor-page editor-page-${editorType}`;
   app.innerHTML = `
-    ${renderPageNav('editor')}
-    <h2>登録済みデータの表示名・フォルダを編集</h2>
-    <p class="hint">画像またはチェックで複数選択できます。名前は画像を右クリックするか「名前」から編集できます。選択項目のつまみ（⠿）をフォルダへドラッグするとまとめて移動します。</p>
-    ${renderCatalogOrganizer('character', state.catalog.characters, state.catalog.groups.characters)}
-    ${renderCatalogOrganizer('clothes', state.catalog.clothingImages, state.catalog.groups.clothes)}`;
+    ${renderPageNav(`editor-${editorType}`)}
+    <h2>${typeName}の表示名・フォルダを編集</h2>
+    <p class="hint">画像またはチェックで複数選択できます。名前は画像を右クリックするか「名前」から編集できます。選択項目のつまみ（⠿）をフォルダへドラッグするとまとめて移動します。${editorType === 'clothes' ? 'チェックした複数枚は同じ服のバリエーションとしてまとめられます。' : ''}</p>
+    ${renderCatalogOrganizer(editorType, items, state.catalog.groups[editorType === 'character' ? 'characters' : 'clothes'])}`;
 
   wireCatalogOrganizer();
 }
@@ -525,7 +529,7 @@ function selectCatalogFolder(event) {
   if (folderView === 'organizer') {
     state.organizerFolders[type] = group;
     state.selectedCatalogItems[type].clear();
-    renderCatalogEditorPage();
+    renderCatalogEditorPage(type);
     return;
   }
   if (folderView === 'characters' || folderView === 'clothes') {
@@ -1799,10 +1803,12 @@ async function createCatalogGroup(event) {
 
 function route() {
   const m = location.hash.match(/^#\/char\/([A-Za-z0-9_-]+)/);
-  const pageMatch = location.hash.match(/^#\/(clothes|editor)(?:\/|$)/);
+  const pageMatch = location.hash.match(/^#\/(clothes|editor)(?:\/(character|clothes))?(?:\/|$)/);
   state.currentCharacter = m ? m[1] : null;
   state.routeHash = location.hash;
   state.page = pageMatch ? pageMatch[1] : 'home';
+  // #/editor は旧URLそのままでもキャラ編集ページとして扱う
+  if (state.page === 'editor') state.editorSection = pageMatch[2] === 'clothes' ? 'clothes' : 'character';
   if (state.currentCharacter) {
     const characterSettings = promptSettingsForCharacter(state.currentCharacter);
     if (characterSettings.source === 'preset') {
@@ -1836,7 +1842,7 @@ function route() {
 function renderCurrentView() {
   if (state.currentCharacter) renderCharacterView();
   else if (state.page === 'clothes') renderClothesPage();
-  else if (state.page === 'editor') renderCatalogEditorPage();
+  else if (state.page === 'editor') renderCatalogEditorPage(state.editorSection);
   else renderCharacterList();
 }
 
