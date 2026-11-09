@@ -13,6 +13,9 @@ const PROMPT_SETTINGS_FILE = path.join(STORE_DIR, 'prompt-settings.json');
 const GENERATED_PREFERENCES_FILE = path.join(STORE_DIR, 'generated-preferences.json');
 const GENERATED_METADATA_FILE = path.join(STORE_DIR, 'generated-metadata.json');
 const CATALOG_METADATA_FILE = path.join(STORE_DIR, 'catalog-metadata.json');
+const CLOTHES_DIR = path.join(STORE_DIR, 'clothes');
+const CHARACTERS_DIR = path.join(STORE_DIR, 'characters');
+const GENERATED_DIR = path.join(STORE_DIR, 'generated');
 const PORT = Number(process.env.PORT || 3000);
 
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'heic', 'heif']);
@@ -55,6 +58,14 @@ function matchesHeif(data) {
 // ---------------------------------------------------------------------------
 // Catalog: everything is driven by the filesystem, so files added later show up
 // as candidates without any manual registration.
+//
+// Cost shape: one directory read per folder and one stat per file we report, so
+// a scan scales with the number of files rather than with characters x outfits.
+// The result is cached against directory mtimes, so a reload costs a handful of
+// stats instead of thousands. Additions made directly on the drive are still
+// picked up, because adding or removing a file changes the parent directory's
+// mtime. A file overwritten under the same name is the one case the cache does
+// not notice until that directory changes, so the write paths invalidate too.
 // ---------------------------------------------------------------------------
 
 function extOf(name) {
@@ -63,6 +74,57 @@ function extOf(name) {
 
 function isImage(name) {
   return IMAGE_EXTS.has(extOf(name));
+}
+
+const COLLATOR = new Intl.Collator('ja', { numeric: true });
+const CATALOG_CACHE = { key: null, value: null };
+
+function readEntries(dir) {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+}
+
+// Dirents already carry the entry type, so a regular file needs no stat.
+// Symlinks keep the old behaviour of following the link.
+function isReportableFile(dir, entry) {
+  if (entry.isFile()) return true;
+  if (entry.isSymbolicLink()) {
+    try {
+      return fs.statSync(path.join(dir, entry.name)).isFile();
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+function invalidateCatalogCache() {
+  CATALOG_CACHE.key = null;
+}
+
+// Cheap change signal: mtimeMs of every folder plus the metadata files.
+function catalogFingerprint() {
+  const parts = [];
+  const stamp = (target) => {
+    try {
+      parts.push(`${target}=${fs.statSync(target).mtimeMs}`);
+    } catch {
+      parts.push(`${target}=missing`);
+    }
+  };
+  for (const file of [CLOTHES_DIR, CHARACTERS_DIR, GENERATED_DIR,
+    PROMPT_SETTINGS_FILE, GENERATED_PREFERENCES_FILE, GENERATED_METADATA_FILE, CATALOG_METADATA_FILE]) {
+    stamp(file);
+  }
+  for (const parent of [CHARACTERS_DIR, GENERATED_DIR]) {
+    for (const entry of readEntries(parent) ?? []) {
+      if (entry.isDirectory()) stamp(path.join(parent, entry.name));
+    }
+  }
+  return parts.join('|');
 }
 
 function isCatalogItemId(id) {
@@ -76,13 +138,13 @@ function isCatalogItemId(id) {
 }
 
 function naturalSort(a, b) {
-  return a.localeCompare(b, 'ja', { numeric: true });
+  return COLLATOR.compare(a, b);
 }
 
-function findCharacterImage(charactersDir, id) {
-  const entries = fs.readdirSync(charactersDir, { withFileTypes: true });
-  const directImage = entries
-    .filter((entry) => entry.isFile()
+function findCharacterImage(charactersDir, id, topEntries = null) {
+  const entries = topEntries ?? readEntries(charactersDir);
+  const directImage = (entries ?? [])
+    .filter((entry) => isReportableFile(charactersDir, entry)
       && isImage(entry.name)
       && path.basename(entry.name, path.extname(entry.name)) === id)
     .sort((a, b) => a.name.localeCompare(b.name))[0];
@@ -95,8 +157,11 @@ function findCharacterImage(charactersDir, id) {
   }
 
   const characterDir = path.join(charactersDir, id);
-  if (!fs.existsSync(characterDir) || !fs.statSync(characterDir).isDirectory()) return null;
-  const files = fs.readdirSync(characterDir).filter(isImage);
+  const inner = readEntries(characterDir);
+  if (!inner) return null; // missing, or not a directory
+  const files = inner
+    .filter((entry) => isReportableFile(characterDir, entry) && isImage(entry.name))
+    .map((entry) => entry.name);
   const icon = files.find((f) => f.toLowerCase().startsWith('icon.')) ?? files[0] ?? null;
   if (!icon) return null;
 
@@ -106,18 +171,26 @@ function findCharacterImage(charactersDir, id) {
   };
 }
 
+// One directory read per character folder. Generated filenames carry the outfit
+// id before the "__" separator, so the lookup below is a map hit rather than a
+// second pass over the folder.
+function generatedIndex(generatedDir) {
+  const byVariant = new Map();
+  for (const entry of readEntries(generatedDir) ?? []) {
+    if (!isImage(entry.name) || !isReportableFile(generatedDir, entry)) continue;
+    const base = path.basename(entry.name, path.extname(entry.name));
+    const variantId = base.split('__')[0] || base;
+    if (!byVariant.has(variantId)) byVariant.set(variantId, []);
+    byVariant.get(variantId).push({
+      file: entry.name,
+      createdAt: fs.statSync(path.join(generatedDir, entry.name)).mtime.toISOString(),
+    });
+  }
+  return byVariant;
+}
+
 function generatedFiles(generatedDir, dressId) {
-  if (!fs.existsSync(generatedDir)) return [];
-  return fs.readdirSync(generatedDir)
-    .filter((f) => {
-      if (!isImage(f) || !fs.statSync(path.join(generatedDir, f)).isFile()) return false;
-      const base = path.basename(f, path.extname(f));
-      return base === dressId || base.startsWith(`${dressId}__`);
-    })
-    .map((file) => ({
-      file,
-      createdAt: fs.statSync(path.join(generatedDir, file)).mtime.toISOString(),
-    }))
+  return (generatedIndex(generatedDir).get(dressId) ?? [])
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
@@ -147,6 +220,7 @@ function writeGeneratedPreferences(preferences) {
   try {
     fs.writeFileSync(temporaryFile, JSON.stringify(preferences, null, 2), 'utf8');
     fs.renameSync(temporaryFile, GENERATED_PREFERENCES_FILE);
+    invalidateCatalogCache();
   } finally {
     if (fs.existsSync(temporaryFile)) fs.unlinkSync(temporaryFile);
   }
@@ -208,6 +282,7 @@ function writeGeneratedMetadata(metadata) {
   try {
     fs.writeFileSync(temporaryFile, JSON.stringify(validated, null, 2), 'utf8');
     fs.renameSync(temporaryFile, GENERATED_METADATA_FILE);
+    invalidateCatalogCache();
   } finally {
     if (fs.existsSync(temporaryFile)) fs.unlinkSync(temporaryFile);
   }
@@ -256,38 +331,38 @@ function writeCatalogMetadata(metadata) {
   try {
     fs.writeFileSync(temporaryFile, JSON.stringify(metadata, null, 2), 'utf8');
     fs.renameSync(temporaryFile, CATALOG_METADATA_FILE);
+    invalidateCatalogCache();
   } finally {
     if (fs.existsSync(temporaryFile)) fs.unlinkSync(temporaryFile);
   }
 }
 
 function scanCatalog() {
-  const clothesDir = path.join(STORE_DIR, 'clothes');
-  const charactersDir = path.join(STORE_DIR, 'characters');
-  const generatedDir = path.join(STORE_DIR, 'generated');
+  const key = catalogFingerprint();
+  if (key === CATALOG_CACHE.key) return CATALOG_CACHE.value;
+
   const generatedPreferences = readGeneratedPreferences();
   const metadata = readCatalogMetadata();
 
   const clothingImages = [];
-  if (fs.existsSync(clothesDir)) {
-    for (const f of fs.readdirSync(clothesDir)) {
-      if (!fs.statSync(path.join(clothesDir, f)).isFile() || !isImage(f)) continue;
-      const id = path.basename(f, path.extname(f));
-      if (!isCatalogItemId(id)) continue;
-      clothingImages.push({
-        id,
-        name: metadata.clothes[id]?.alias || id.slice(0, 100),
-        group: metadata.clothes[id]?.group || '',
-        variantOf: metadata.clothes[id]?.variantOf || null,
-        url: `/store/clothes/${encodeURIComponent(f)}`,
-      });
-    }
+  for (const entry of readEntries(CLOTHES_DIR) ?? []) {
+    if (!isImage(entry.name) || !isReportableFile(CLOTHES_DIR, entry)) continue;
+    const id = path.basename(entry.name, path.extname(entry.name));
+    if (!isCatalogItemId(id)) continue;
+    const item = metadata.clothes[id] ?? {};
+    clothingImages.push({
+      id,
+      name: item.alias || id.slice(0, 100),
+      group: item.group || '',
+      variantOf: item.variantOf || null,
+      url: `/store/clothes/${encodeURIComponent(entry.name)}`,
+    });
   }
   clothingImages.sort((a, b) => naturalSort(a.id, b.id));
   const clothingById = new Map(clothingImages.map((item) => [item.id, item]));
   const clothingGroups = new Map();
   for (const image of clothingImages) {
-    const declaredOutfit = metadata.clothes[image.id]?.variantOf;
+    const declaredOutfit = image.variantOf;
     const outfitId = declaredOutfit && clothingById.has(declaredOutfit) ? declaredOutfit : image.id;
     if (!clothingGroups.has(outfitId)) clothingGroups.set(outfitId, []);
     clothingGroups.get(outfitId).push(image);
@@ -306,49 +381,52 @@ function scanCatalog() {
     };
   }).sort((a, b) => naturalSort(a.id, b.id));
 
+  const characterEntries = readEntries(CHARACTERS_DIR) ?? [];
+  const characterIds = new Set();
+  for (const entry of characterEntries) {
+    if (entry.isDirectory()) {
+      if (isCatalogItemId(entry.name)) characterIds.add(entry.name);
+    } else if (isImage(entry.name) && isReportableFile(CHARACTERS_DIR, entry)) {
+      const id = path.basename(entry.name, path.extname(entry.name));
+      if (SAFE_ID.test(id)) characterIds.add(id);
+    }
+  }
+
   const characters = [];
-  if (fs.existsSync(charactersDir)) {
-    const characterIds = new Set();
-    for (const entry of fs.readdirSync(charactersDir, { withFileTypes: true })) {
-      if (entry.isDirectory()) {
-        if (isCatalogItemId(entry.name)) characterIds.add(entry.name);
-      } else if (entry.isFile() && isImage(entry.name)) {
-        const id = path.basename(entry.name, path.extname(entry.name));
-        if (SAFE_ID.test(id)) characterIds.add(id);
+  for (const id of characterIds) {
+    const characterImage = findCharacterImage(CHARACTERS_DIR, id, characterEntries);
+    const index = generatedIndex(path.join(GENERATED_DIR, id));
+    const generated = {};
+    for (const dress of clothes) {
+      const variantIds = [dress.id, ...dress.variants.map((variant) => variant.id).filter((variantId) => variantId !== dress.id)];
+      const primaryFile = variantIds.map((variantId) => generatedPreferences[id]?.[variantId]).find(Boolean);
+      const seen = new Map();
+      for (const variantId of variantIds) {
+        for (const image of index.get(variantId) ?? []) seen.set(image.file, image);
       }
+      generated[dress.id] = [...seen.values()]
+        .sort((a, b) => Number(b.file === primaryFile) - Number(a.file === primaryFile)
+          || b.createdAt.localeCompare(a.createdAt))
+        .map(({ file, createdAt }) => ({
+          file,
+          url: `/store/generated/${id}/${encodeURIComponent(file)}`,
+          createdAt,
+          primary: file === primaryFile,
+        }));
     }
 
-    for (const id of characterIds) {
-      const characterImage = findCharacterImage(charactersDir, id);
-      const gdir = path.join(generatedDir, id);
-      const generated = {};
-      for (const dress of clothes) {
-        const variantIds = [dress.id, ...dress.variants.map((variant) => variant.id).filter((variantId) => variantId !== dress.id)];
-        const primaryFile = variantIds.map((variantId) => generatedPreferences[id]?.[variantId]).find(Boolean);
-        generated[dress.id] = [...new Map(variantIds.flatMap((variantId) => generatedFiles(gdir, variantId))
-          .map((image) => [image.file, image])).values()]
-          .sort((a, b) => Number(b.file === primaryFile) - Number(a.file === primaryFile)
-            || b.createdAt.localeCompare(a.createdAt))
-          .map(({ file, createdAt }) => ({
-            file,
-            url: `/store/generated/${id}/${encodeURIComponent(file)}`,
-            createdAt,
-            primary: file === primaryFile,
-          }));
-      }
-
-      characters.push({
-        id,
-        name: metadata.characters[id]?.alias || id.slice(0, 100),
-        group: metadata.characters[id]?.group || '',
-        iconUrl: characterImage?.url ?? null,
-        generated,
-      });
-    }
+    const item = metadata.characters[id] ?? {};
+    characters.push({
+      id,
+      name: item.alias || id.slice(0, 100),
+      group: item.group || '',
+      iconUrl: characterImage?.url ?? null,
+      generated,
+    });
   }
   characters.sort((a, b) => naturalSort(a.id, b.id));
 
-  return {
+  const result = {
     clothes,
     clothingImages,
     characters,
@@ -357,6 +435,9 @@ function scanCatalog() {
       clothes: metadata.clothesGroups,
     },
   };
+  CATALOG_CACHE.key = key;
+  CATALOG_CACHE.value = result;
+  return result;
 }
 
 function invalidPromptSettings(message) {
@@ -442,6 +523,7 @@ function writePromptSettings(settings) {
   try {
     fs.writeFileSync(temporaryFile, JSON.stringify(validated, null, 2), 'utf8');
     fs.renameSync(temporaryFile, PROMPT_SETTINGS_FILE);
+    invalidateCatalogCache();
   } finally {
     if (fs.existsSync(temporaryFile)) fs.unlinkSync(temporaryFile);
   }
@@ -455,20 +537,15 @@ function findGeneratedImage(character, dress, file) {
 }
 
 function generatedFilesForOutfit(generatedDir, dressId) {
-  const variantIds = clothingVariantIds(dressId);
-  return [...new Map(variantIds.flatMap((variantId) => generatedFiles(generatedDir, variantId))
+  const index = generatedIndex(generatedDir);
+  return [...new Map(clothingVariantIds(dressId).flatMap((variantId) => index.get(variantId) ?? [])
     .map((image) => [image.file, image])).values()]
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 function clothingVariantIds(dressId) {
-  const clothesDir = path.join(STORE_DIR, 'clothes');
   const metadata = readCatalogMetadata();
-  const existingIds = fs.existsSync(clothesDir)
-    ? fs.readdirSync(clothesDir)
-      .filter((file) => fs.statSync(path.join(clothesDir, file)).isFile() && isImage(file))
-      .map((file) => path.basename(file, path.extname(file)))
-    : [];
+  const existingIds = readCatalogIds(CLOTHES_DIR);
   const rootId = metadata.clothes[dressId]?.variantOf || dressId;
   const variants = existingIds.filter((id) => (
     id === rootId || metadata.clothes[id]?.variantOf === rootId
@@ -519,7 +596,8 @@ function handleDeleteGeneratedImage(res, body) {
   const preferences = readGeneratedPreferences();
   const metadata = readGeneratedMetadata();
   const owner = generatedImageOwner(request.character, request.dress, request.file);
-  fs.unlinkSync(path.join(STORE_DIR, 'generated', request.character, request.file));
+  fs.unlinkSync(path.join(GENERATED_DIR, request.character, request.file));
+  invalidateCatalogCache();
   let preferencesChanged = false;
   for (const variantId of clothingVariantIds(request.dress)) {
     if (preferences[request.character]?.[variantId] === request.file) {
@@ -676,22 +754,42 @@ async function handleGenerate(res, body) {
   });
 }
 
+// One read per folder. Callers that test many ids share the list instead of
+// rescanning the folder once per id.
+function readCatalogIds(dir) {
+  const ids = [];
+  for (const entry of readEntries(dir) ?? []) {
+    if (isImage(entry.name) && isReportableFile(dir, entry)) {
+      ids.push(path.basename(entry.name, path.extname(entry.name)));
+    }
+  }
+  return ids;
+}
+
+function identifierSet(dir, includeDirectories = false) {
+  const ids = new Set();
+  for (const entry of readEntries(dir) ?? []) {
+    if (entry.isDirectory()) {
+      if (includeDirectories) ids.add(entry.name.toLowerCase());
+      continue;
+    }
+    if (isImage(entry.name) && isReportableFile(dir, entry)) {
+      ids.add(path.basename(entry.name, path.extname(entry.name)).toLowerCase());
+    }
+  }
+  return ids;
+}
+
 function identifierExists(dir, id, includeDirectories = false) {
-  if (!fs.existsSync(dir)) return false;
-  return fs.readdirSync(dir, { withFileTypes: true }).some((entry) => {
-    if (includeDirectories && entry.isDirectory() && entry.name.toLowerCase() === id.toLowerCase()) return true;
-    return entry.isFile()
-      && isImage(entry.name)
-      && path.basename(entry.name, path.extname(entry.name)).toLowerCase() === id.toLowerCase();
-  });
+  return identifierSet(dir, includeDirectories).has(id.toLowerCase());
 }
 
 function nextCatalogId(type) {
   const isCharacter = type === 'character';
-  const dir = path.join(STORE_DIR, isCharacter ? 'characters' : 'clothes');
+  const ids = identifierSet(path.join(STORE_DIR, isCharacter ? 'characters' : 'clothes'), isCharacter);
   const prefix = isCharacter ? 'chara' : 'd';
   let number = 1;
-  while (identifierExists(dir, `${prefix}${number}`, isCharacter)) number += 1;
+  while (ids.has(`${prefix}${number}`)) number += 1;
   return `${prefix}${number}`;
 }
 
@@ -737,6 +835,7 @@ function handleUpload(res, body) {
     if (error.code === 'EEXIST') return json(res, 409, { error: `ID already exists: ${id}` });
     throw error;
   }
+  invalidateCatalogCache();
   if (requestedAlias?.trim()) {
     try {
       const metadata = readCatalogMetadata();
@@ -800,7 +899,8 @@ function handleCatalogItems(res, body) {
   }
 
   const dirName = type === 'character' ? 'characters' : 'clothes';
-  if (items.some((item) => !identifierExists(path.join(STORE_DIR, dirName), item.id, type === 'character'))) {
+  const existing = identifierSet(path.join(STORE_DIR, dirName), type === 'character');
+  if (items.some((item) => !existing.has(item.id.toLowerCase()))) {
     return json(res, 404, { error: 'One or more catalog items were not found' });
   }
 
@@ -831,16 +931,14 @@ function handleClothingVariants(res, body) {
     return json(res, 400, { error: 'At least two clothing IDs are required to create variants' });
   }
   const metadata = readCatalogMetadata();
-  const clothesDir = path.join(STORE_DIR, 'clothes');
-  if (ids.some((id) => !identifierExists(clothesDir, id))) {
+  const existingIds = readCatalogIds(CLOTHES_DIR);
+  const existingLower = new Set(existingIds.map((name) => name.toLowerCase()));
+  if (ids.some((id) => !existingLower.has(id.toLowerCase()))) {
     return json(res, 404, { error: 'One or more clothing images were not found' });
   }
 
   const selectedGroups = new Set(ids.map((id) => metadata.clothes[id]?.variantOf || id));
-  const affectedIds = fs.readdirSync(clothesDir)
-    .filter((file) => isImage(file))
-    .map((file) => path.basename(file, path.extname(file)))
-    .filter((id) => selectedGroups.has(metadata.clothes[id]?.variantOf || id));
+  const affectedIds = existingIds.filter((id) => selectedGroups.has(metadata.clothes[id]?.variantOf || id));
   if (outfitId !== null && !ids.includes(outfitId)) {
     return json(res, 400, { error: 'outfitId must be one of the selected clothing IDs' });
   }
