@@ -1,5 +1,10 @@
 const app = document.getElementById('app');
 const themeToggle = document.getElementById('theme-toggle');
+const pageNavLinks = [
+  { key: 'home', href: '#/', label: 'キャラ一覧' },
+  { key: 'clothes', href: '#/clothes', label: '服の一覧' },
+  { key: 'editor', href: '#/editor', label: '表示名・フォルダ編集' },
+];
 const savedCharacterLayout = localStorage.getItem('kisekae3-character-layout');
 const savedDressFilter = localStorage.getItem('kisekae3-dress-filter');
 let characterGridResizeObserver = null;
@@ -18,7 +23,7 @@ const state = {
   randomFolderActive: false,
   randomCharacterIds: [],
   organizerFolders: { character: '', clothes: '' },
-  organizerOpen: { character: false, clothes: true },
+  page: 'home',
   dressFolder: '',
   dressFilter: ['all', 'generated', 'ungenerated'].includes(savedDressFilter) ? savedDressFilter : 'all',
   currentCharacter: null, // char id when on character view
@@ -243,16 +248,11 @@ function versionLabel(version, index) {
 // ---------------------------------------------------------------------------
 
 function renderCharacterList() {
-  app.querySelectorAll('.catalog-organizer').forEach((organizer) => {
-    state.organizerOpen[organizer.dataset.type] = organizer.open;
-  });
   app.className = 'home-page';
   const characterFolders = groupedCatalogItems(state.catalog.characters, state.catalog.groups.characters);
-  const clothesFolders = groupedCatalogItems(state.catalog.clothes, state.catalog.groups.clothes);
   const visibleCharacters = state.randomFolderActive
     ? state.randomCharacterIds.map((id) => state.catalog.characters.find((character) => character.id === id)).filter(Boolean)
     : characterFolders.find(([group]) => group === state.catalogFolders.characters)?.[1] || [];
-  const visibleClothes = clothesFolders.find(([group]) => group === state.catalogFolders.clothes)?.[1] || [];
   const sortedCharacters = [...visibleCharacters];
   if (state.characterSort === 'generated') {
     sortedCharacters.sort((a, b) => generatedCount(b) - generatedCount(a));
@@ -269,8 +269,6 @@ function renderCharacterList() {
         <span class="count">${generatedCount(c)} / ${state.catalog.clothes.length} 生成済み</span>
       </div>
     </a>`).join('');
-  const clothes = visibleClothes.map((d) => `
-    <div class="card small"><img src="${d.url}" alt="${esc(d.name)}" loading="lazy" /><div class="meta"><strong>${esc(d.name)}</strong></div></div>`).join('');
   const paginationNav = (bottom) => pageCount > 1 ? `<nav class="character-pagination${bottom ? ' character-pagination-bottom' : ''}" aria-label="キャラ一覧のページ">
     <button type="button" data-character-page="${state.characterPage - 1}" ${state.characterPage === 1 ? 'disabled' : ''}>前へ</button>
     <span>${state.characterPage} / ${pageCount}ページ</span>
@@ -295,6 +293,7 @@ function renderCharacterList() {
       ${paginationNav(false)}`
     : '';
   app.innerHTML = `
+    ${renderPageNav('home')}
     <h2>キャラを選ぶ</h2>
     ${state.catalog.characters.length ? `
       ${renderFolderPicker(characterFolders, state.catalogFolders.characters, 'characters', 'characters', true, state.randomFolderActive)}
@@ -315,21 +314,6 @@ function renderCharacterList() {
             <span class="upload-status" role="status"></span>
           </form>`).join('')}
       </div>
-    </details>
-    <details class="catalog-clothes clothes-browser">
-      <summary>登録済みの服を一覧表示</summary>
-      ${state.catalog.clothes.length ? `
-        ${renderFolderPicker(clothesFolders, state.catalogFolders.clothes, 'clothes')}
-        ${state.catalogFolders.clothes === null
-          ? '<p class="empty">フォルダを選ぶと中身が表示されます。</p>'
-          : `<div class="grid small">${clothes || '<p class="empty">このフォルダに服はありません。</p>'}</div>`}`
-        : '<p class="empty">store/clothes/ に服の画像を追加してください。</p>'}
-    </details>
-    <details class="catalog-clothes catalog-editor">
-      <summary>登録済みデータの表示名・フォルダを編集</summary>
-      <p class="hint">画像またはチェックで複数選択できます。名前は画像を右クリックするか「名前」から編集できます。選択項目のつまみ（⠿）をフォルダへドラッグするとまとめて移動します。</p>
-      ${renderCatalogOrganizer('character', state.catalog.characters, state.catalog.groups.characters)}
-      ${renderCatalogOrganizer('clothes', state.catalog.clothingImages, state.catalog.groups.clothes)}
     </details>`;
 
   characterGridResizeObserver?.disconnect();
@@ -406,6 +390,53 @@ function renderCharacterList() {
     });
     form.addEventListener('submit', uploadImage);
   });
+  app.querySelectorAll('.catalog-folder').forEach((button) => {
+    button.addEventListener('click', selectCatalogFolder);
+  });
+}
+
+function renderPageNav(active) {
+  return `
+    <nav class="page-nav" aria-label="ページの切り替え">
+      ${pageNavLinks.map((page) => `
+        <a href="${page.href}"${page.key === active ? ' aria-current="page"' : ''}>${page.label}</a>`).join('')}
+    </nav>`;
+}
+
+function renderClothesPage() {
+  app.className = 'catalog-page clothes-page';
+  const clothesFolders = groupedCatalogItems(state.catalog.clothes, state.catalog.groups.clothes);
+  const visibleClothes = clothesFolders.find(([group]) => group === state.catalogFolders.clothes)?.[1] || [];
+  const cards = visibleClothes.map((d) => `
+    <div class="card small"><img src="${d.url}" alt="${esc(d.name)}" loading="lazy" /><div class="meta"><strong>${esc(d.name)}</strong></div></div>`).join('');
+  app.innerHTML = `
+    ${renderPageNav('clothes')}
+    <h2>登録済みの服を一覧表示</h2>
+    ${state.catalog.clothes.length ? `
+      ${renderFolderPicker(clothesFolders, state.catalogFolders.clothes, 'clothes')}
+      ${state.catalogFolders.clothes === null
+        ? '<p class="empty">フォルダを選ぶと中身が表示されます。</p>'
+        : `<div class="grid small">${cards || '<p class="empty">このフォルダに服はありません。</p>'}</div>`}`
+      : '<p class="empty">store/clothes/ に服の画像を追加してください。</p>'}`;
+
+  app.querySelectorAll('.catalog-folder').forEach((button) => {
+    button.addEventListener('click', selectCatalogFolder);
+  });
+}
+
+function renderCatalogEditorPage() {
+  app.className = 'catalog-page editor-page';
+  app.innerHTML = `
+    ${renderPageNav('editor')}
+    <h2>登録済みデータの表示名・フォルダを編集</h2>
+    <p class="hint">画像またはチェックで複数選択できます。名前は画像を右クリックするか「名前」から編集できます。選択項目のつまみ（⠿）をフォルダへドラッグするとまとめて移動します。</p>
+    ${renderCatalogOrganizer('character', state.catalog.characters, state.catalog.groups.characters)}
+    ${renderCatalogOrganizer('clothes', state.catalog.clothingImages, state.catalog.groups.clothes)}`;
+
+  wireCatalogOrganizer();
+}
+
+function wireCatalogOrganizer() {
   app.querySelectorAll('.catalog-edit-form').forEach((form) => {
     form.addEventListener('contextmenu', renameCatalogItem);
   });
@@ -427,11 +458,6 @@ function renderCharacterList() {
   });
   app.querySelectorAll('.catalog-group-form').forEach((form) => {
     form.addEventListener('submit', createCatalogGroup);
-  });
-  app.querySelectorAll('.catalog-organizer').forEach((organizer) => {
-    organizer.addEventListener('toggle', () => {
-      state.organizerOpen[organizer.dataset.type] = organizer.open;
-    });
   });
   app.querySelectorAll('.catalog-rename-group').forEach((form) => {
     form.addEventListener('submit', renameCatalogGroup);
@@ -487,9 +513,7 @@ function selectCatalogFolder(event) {
   if (folderView === 'organizer') {
     state.organizerFolders[type] = group;
     state.selectedCatalogItems[type].clear();
-    renderCharacterList();
-    const editor = app.querySelector('.catalog-editor');
-    if (editor) editor.open = true;
+    renderCatalogEditorPage();
     return;
   }
   if (folderView === 'characters' || folderView === 'clothes') {
@@ -504,12 +528,10 @@ function selectCatalogFolder(event) {
     if (folderView === 'characters') {
       state.randomFolderActive = false;
       state.characterPage = 1;
+      renderCharacterList();
+      return;
     }
-    renderCharacterList();
-    if (folderView === 'clothes') {
-      const clothesBrowser = app.querySelector('.clothes-browser');
-      if (clothesBrowser) clothesBrowser.open = true;
-    }
+    renderClothesPage();
     return;
   }
   if (folderView === 'dress') {
@@ -524,8 +546,8 @@ function renderCatalogOrganizer(type, items, declaredGroups) {
   const activeGroup = state.organizerFolders[type];
   const activeItems = groupedItems.find(([group]) => group === activeGroup)?.[1] || [];
   return `
-    <details class="catalog-organizer" data-type="${type}" ${state.organizerOpen[type] ? 'open' : ''}>
-      <summary>${typeName}の編集 (${items.length}件)</summary>
+    <section class="catalog-organizer" data-type="${type}">
+      <h3>${typeName}の編集 (${items.length}件)</h3>
       <form class="catalog-group-form" data-type="${type}">
         <label>新しいフォルダ<input name="group" type="text" maxlength="100" required placeholder="例: 夏服" /></label>
         <button type="submit">フォルダを作成</button>
@@ -568,7 +590,7 @@ function renderCatalogOrganizer(type, items, declaredGroups) {
                 </form>`).join('') : '<p class="empty">このフォルダは空です。</p>'}
             </div>
           </section>`}
-    </details>`;
+    </section>`;
 }
 
 function groupedCatalogItems(items, declaredGroups) {
@@ -641,9 +663,7 @@ async function dropCatalogItem(event) {
     state.organizerFolders[dragged.type] = folder.dataset.group;
     await refreshCatalog();
     state.selectedCatalogItems[dragged.type].clear();
-    renderCharacterList();
-    const editor = app.querySelector('.catalog-editor');
-    if (editor) editor.open = true;
+    renderCurrentView();
     const status = app.querySelector(`.catalog-organizer[data-type="${dragged.type}"] .catalog-group-status`);
     if (status) status.textContent = `${result.movedItems}件を「${folder.dataset.group || '未分類'}」へ移動しました`;
   } catch (error) {
@@ -689,11 +709,7 @@ async function saveCatalogVariants(event) {
     });
     state.selectedCatalogItems.clothes.clear();
     await refreshCatalog();
-    renderCharacterList();
-    const editor = app.querySelector('.catalog-editor');
-    if (editor) editor.open = true;
-    const groupEditor = app.querySelector('.catalog-organizer[data-type="clothes"]');
-    if (groupEditor) groupEditor.open = true;
+    renderCurrentView();
     const resultStatus = app.querySelector('.catalog-organizer[data-type="clothes"] .catalog-group-status');
     if (resultStatus) {
       resultStatus.textContent = outfitId
@@ -1102,9 +1118,7 @@ async function deleteCatalogGroup(event) {
     if (type === 'clothes' && state.catalogFolders.clothes === group) state.catalogFolders.clothes = null;
     if (type === 'clothes' && state.dressFolder === group) state.dressFolder = null;
     await refreshCatalog();
-    renderCharacterList();
-    const editor = app.querySelector('.catalog-editor');
-    if (editor) editor.open = true;
+    renderCurrentView();
   } catch (error) {
     const organizer = button.closest('.catalog-organizer');
     const status = organizer?.querySelector('.catalog-folder-content .catalog-group-status');
@@ -1137,9 +1151,7 @@ async function renameCatalogGroup(event) {
     if (type === 'clothes' && state.catalogFolders.clothes === group) state.catalogFolders.clothes = newGroup;
     if (type === 'clothes' && state.dressFolder === group) state.dressFolder = newGroup;
     await refreshCatalog();
-    renderCharacterList();
-    const editor = app.querySelector('.catalog-editor');
-    if (editor) editor.open = true;
+    renderCurrentView();
     const organizer = app.querySelector(`.catalog-organizer[data-type="${type}"]`);
     const renamedForm = [...(organizer?.querySelectorAll('.catalog-rename-group') || [])]
       .find((candidate) => candidate.dataset.group === newGroup);
@@ -1719,12 +1731,10 @@ async function renameCatalogItem(event) {
       }),
     });
     await refreshCatalog();
-    renderCharacterList();
+    renderCurrentView();
     const savedForm = [...app.querySelectorAll('.catalog-edit-form')]
       .find((item) => item.dataset.type === form.dataset.type && item.dataset.id === form.dataset.id);
     if (savedForm) {
-      const details = savedForm.closest('details');
-      if (details) details.open = true;
       savedForm.querySelector('.upload-status').textContent = '名前を保存しました';
     }
   } catch (error) {
@@ -1749,9 +1759,7 @@ async function createCatalogGroup(event) {
     });
     state.organizerFolders[form.dataset.type] = created.group;
     await refreshCatalog();
-    renderCharacterList();
-    const editor = app.querySelector('.catalog-editor');
-    if (editor) editor.open = true;
+    renderCurrentView();
     const organizer = app.querySelector(`.catalog-organizer[data-type="${form.dataset.type}"]`);
     const groupForm = organizer?.querySelector('.catalog-group-form');
     if (groupForm) {
@@ -1771,8 +1779,10 @@ async function createCatalogGroup(event) {
 
 function route() {
   const m = location.hash.match(/^#\/char\/([A-Za-z0-9_-]+)/);
+  const pageMatch = location.hash.match(/^#\/(clothes|editor)(?:\/|$)/);
   state.currentCharacter = m ? m[1] : null;
   state.routeHash = location.hash;
+  state.page = pageMatch ? pageMatch[1] : 'home';
   if (state.currentCharacter) {
     const characterSettings = promptSettingsForCharacter(state.currentCharacter);
     if (characterSettings.source === 'preset') {
@@ -1800,7 +1810,14 @@ function route() {
     }
     syncCombinedPrompt();
     renderCharacterView();
-  } else renderCharacterList();
+  } else renderCurrentView();
+}
+
+function renderCurrentView() {
+  if (state.currentCharacter) renderCharacterView();
+  else if (state.page === 'clothes') renderClothesPage();
+  else if (state.page === 'editor') renderCatalogEditorPage();
+  else renderCharacterList();
 }
 
 window.addEventListener('hashchange', async () => {

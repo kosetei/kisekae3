@@ -179,12 +179,22 @@ button.card { cursor: pointer; font: inherit; text-align: left; }
 .upload-form .hint, .upload-status { margin: 0; font-size: 12px; }
 .upload-status { color: var(--status); white-space: pre-line; }
 .upload-section { margin: 14px 0; padding: 10px 12px; }
-.upload-section summary, .catalog-clothes summary { cursor: pointer; }
-.catalog-clothes { margin-top: 8px; border-top: 1px solid var(--border); }
+.upload-section summary { cursor: pointer; }
+.catalog-page { max-width: 1400px; }
+.page-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; font-size: 14px; }
+.page-nav a {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  text-decoration: none;
+}
+.page-nav a:hover { border-color: var(--link); background: var(--button-bg); }
+.page-nav a[aria-current="page"] { border-color: var(--link); background: var(--button-bg); outline: 2px solid var(--link); outline-offset: 1px; }
 .catalog-group { grid-column: 1 / -1; margin: 14px 0 0; color: var(--muted); font-size: 15px; }
-.catalog-editor > .hint { margin: 8px 0; }
+.catalog-page > .hint { margin: 8px 0; }
 .catalog-organizer { margin-top: 18px; }
-.catalog-organizer > summary { cursor: pointer; font-size: 15px; font-weight: 600; }
+.catalog-organizer > h3 { font-size: 15px; font-weight: 600; }
 .catalog-group-form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-bottom: 10px; }
 .catalog-group-form label { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
 .catalog-group-form input, .catalog-edit-form input { padding: 7px 8px; border: 1px solid var(--input-border); border-radius: 6px; background: var(--field-bg); color: var(--text); font: inherit; }
@@ -541,7 +551,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   header .hint { display: none; }
   header h1 { font-size: 16px; }
   .theme-toggle { margin-left: auto; padding: 6px 8px; font-size: 12px; }
-  .home-page { padding: 12px; }
+  .home-page, .catalog-page { padding: 12px; }
   .character-grid {
     --character-grid-min-width: 0px;
     grid-template-columns: repeat(2, minmax(0, 1fr));
