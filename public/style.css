@@ -385,7 +385,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .stage-image img.stage-image-overlay.stage-image-visible { opacity: 1; }
 .stage-caption { margin: 6px 8px; }
 .dresses { display: flex; min-width: 0; flex-direction: column; }
-.dresses h3 { margin: 0 0 6px; }
+/* 縦画面（既定）: 画像の直後に服の選択肢を置き、表示条件欄はフォルダの下に回す */
+.dresses h3 { margin: 0 0 6px; order: 1; }
 .dress-grid {
   display: flex;
   align-items: flex-start;
@@ -393,13 +394,28 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   overflow-x: auto;
   padding: 2px;
   overscroll-behavior-x: contain;
+  order: 2;
 }
+.dress-folder-picker { order: 3; }
+.dress-filter-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+  order: 4;
+}
+.dress-filter-bar label { font-size: 13px; font-weight: 600; }
+.dress-filter-count { margin-left: auto; color: var(--muted); font-size: 13px; }
+.dress-filter-hint { margin: 0 0 8px; order: 5; }
+.dresses > .stage-caption { order: 6; }
 .dress-variant-picker {
   min-width: 0;
   margin: 10px 0;
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: 8px;
+  order: 7;
 }
 .dress-variant-picker legend { padding: 0 4px; font-size: 13px; font-weight: 600; }
 .dress-variant-grid { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -539,6 +555,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .stage-image img { max-height: 78svh; }
   .dresses { padding: 0 6px; }
   .dresses h3 { padding: 0 2px; }
+  .dresses .dress-filter-bar, .dresses .dress-filter-hint { padding: 0 2px; }
   .advanced-settings { margin: 12px 8px; }
 }
 
@@ -567,9 +584,14 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
     object-fit: contain;
   }
   .dresses { max-height: calc(100dvh - 140px); overflow-y: auto; }
-  .dress-folder-picker { order: 1; }
-  .dress-grid { order: 2; }
-  .dresses > .stage-caption { order: 3; }
+  /* 横向きのサイドバーでは表示条件欄を上部に残す */
+  .dresses h3 { order: 1; }
+  .dresses > .dress-filter-bar { order: 2; }
+  .dresses > .dress-filter-hint { order: 3; }
+  .dress-folder-picker { order: 4; }
+  .dress-grid { order: 5; }
+  .dresses > .stage-caption { order: 6; }
+  .dress-variant-picker { order: 7; }
   .dress-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(82px, 1fr));

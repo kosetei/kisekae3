@@ -1,6 +1,7 @@
 const app = document.getElementById('app');
 const themeToggle = document.getElementById('theme-toggle');
 const savedCharacterLayout = localStorage.getItem('kisekae3-character-layout');
+const savedDressFilter = localStorage.getItem('kisekae3-dress-filter');
 let characterGridResizeObserver = null;
 let characterGridUpdateFrame = 0;
 const state = {
@@ -19,6 +20,7 @@ const state = {
   organizerFolders: { character: '', clothes: '' },
   organizerOpen: { character: false, clothes: true },
   dressFolder: '',
+  dressFilter: ['all', 'generated', 'ungenerated'].includes(savedDressFilter) ? savedDressFilter : 'all',
   currentCharacter: null, // char id when on character view
   selectedDress: null,    // dress id on character view
   selectedDressVariants: {},
@@ -732,7 +734,19 @@ function renderCharacterView() {
   }
   const missing = state.catalog.clothes.filter((d) => !generatedVersions(char, d.id).length);
   const dressFolders = groupedCatalogItems(state.catalog.clothes, state.catalog.groups.clothes);
-  const visibleDresses = dressFolders.find(([group]) => group === state.dressFolder)?.[1] || [];
+  const folderDresses = dressFolders.find(([group]) => group === state.dressFolder)?.[1] || [];
+  const dressMatchesFilter = (dress) => {
+    const done = generatedVersions(char, dress.id).length > 0;
+    if (state.dressFilter === 'generated') return done;
+    if (state.dressFilter === 'ungenerated') return !done;
+    return true;
+  };
+  // 選択中の服は条件に当てはまらない場合でも一覧に残し、現在の表示とのズレを防ぐ
+  const visibleDresses = folderDresses.filter((dress) => dress.id === sel || dressMatchesFilter(dress));
+  const folderGeneratedCount = folderDresses.filter((dress) => generatedVersions(char, dress.id).length).length;
+  const selectedOutsideFilter = sel
+    && folderDresses.some((dress) => dress.id === sel)
+    && !dressMatchesFilter(folderDresses.find((dress) => dress.id === sel));
   const generatedTotal = versions.length;
   const stageSrc = state.stageDisplayedSrc || displaySrc;
   const dressPromptSettings = sel ? promptSettingsForDress(sel) : { source: 'shared' };
@@ -764,9 +778,20 @@ function renderCharacterView() {
 
       <section class="dresses">
         <h3>服を選ぶ</h3>
+        <div class="dress-filter-bar">
+          <label for="dress-filter">表示する服</label>
+          <select id="dress-filter">
+            <option value="all" ${state.dressFilter === 'all' ? 'selected' : ''}>すべて</option>
+            <option value="generated" ${state.dressFilter === 'generated' ? 'selected' : ''}>生成済みだけ</option>
+            <option value="ungenerated" ${state.dressFilter === 'ungenerated' ? 'selected' : ''}>未生成だけ</option>
+          </select>
+          <span class="dress-filter-count">表示 ${visibleDresses.length}件 / フォルダ内 ${folderDresses.length}件（生成済み ${folderGeneratedCount}件）</span>
+        </div>
+        ${selectedOutsideFilter ? '<p class="hint dress-filter-hint">選択中の服は表示条件に当てはまらないため、この一覧では常に表示します。</p>' : ''}
         ${state.dressFolder === null
           ? '<p class="empty">フォルダを選ぶと服が表示されます。</p>'
-          : `<div class="dress-grid">${visibleDresses.map((d) => {
+          : visibleDresses.length
+            ? `<div class="dress-grid">${visibleDresses.map((d) => {
             const done = generatedVersions(char, d.id).length > 0;
             return `
             <button class="card small dress ${d.id === sel ? 'selected' : ''}" data-dress="${esc(d.id)}" aria-label="${esc(d.name)}">
@@ -775,7 +800,8 @@ function renderCharacterView() {
                 <span class="badge ${done ? 'done' : 'todo'}">${done ? '生成済み' : '未生成'}</span>
               </div>
             </button>`;
-          }).join('')}</div>`}
+          }).join('')}</div>`
+            : '<p class="empty">このフォルダに表示条件に合う服はありません。</p>'}
         <div class="dress-folder-picker">${renderFolderPicker(dressFolders, state.dressFolder, 'dress')}</div>
         ${sel ? `<p class="stage-caption">
           選択中の服: ${selUrl ? `生成済み (${versions.length}件)` : '未生成'}
@@ -989,6 +1015,11 @@ function renderCharacterView() {
       state.selectedDressVariants[sel] = event.currentTarget.value;
       renderCharacterView();
     });
+  });
+  app.querySelector('#dress-filter')?.addEventListener('change', (event) => {
+    state.dressFilter = event.currentTarget.value;
+    localStorage.setItem('kisekae3-dress-filter', state.dressFilter);
+    renderCharacterView();
   });
   app.querySelectorAll('.catalog-folder[data-folder-view="dress"]').forEach((button) => {
     button.addEventListener('click', selectCatalogFolder);
