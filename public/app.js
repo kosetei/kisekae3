@@ -5,29 +5,36 @@ const pageNavLinks = [
   { key: 'clothes', href: '#/clothes', label: '服の一覧' },
   { key: 'editor-character', href: '#/editor/character', label: 'キャラ編集' },
   { key: 'editor-clothes', href: '#/editor/clothes', label: '服編集' },
+  { key: 'upload', href: '#/upload', label: 'キャラ・服を追加' },
 ];
 const savedCharacterLayout = localStorage.getItem('kisekae3-character-layout');
 const savedDressFilter = localStorage.getItem('kisekae3-dress-filter');
 let characterGridResizeObserver = null;
 let characterGridUpdateFrame = 0;
-// トップのキャラ一覧で 1 ページに表示する数。ランダム表示の「さらに表示」の上限も同じ数
+let characterListObserver = null;
+let characterMasonry = null;
+let characterListView = null;
+let characterScrollAnchor = null;
+// トップのキャラ一覧で最初に表示する数と、無限スクロール・「さらに表示」1 回で追加する数（ランダムも同じ）
 const CHARACTER_PAGE_SIZE = 30;
-// ランダム表示で最初に出す数と、「さらに表示」1 回で増やす数
-const RANDOM_CHARACTER_STEP = 6;
+// キャラ一覧の読み込み件数・ランダム順・最後に開いたカードなどを再読み込み後も残す
+const CHARACTER_LIST_STORAGE_KEY = 'kisekae3-character-list';
+const savedCharacterList = loadCharacterListState();
 
 const state = {
   catalog: null,
   selectedCatalogItems: { character: new Set(), clothes: new Set() },
-  catalogFolders: { characters: '', clothes: '' },
-  characterSort: 'generated',
-  characterPage: 1,
+  catalogFolders: { characters: savedCharacterList.folder, clothes: '' },
+  characterSort: ['default', 'generated', 'recent'].includes(savedCharacterList.sort) ? savedCharacterList.sort : 'generated',
+  characterLoadedCount: savedCharacterList.loadedCount,
+  characterReturnId: savedCharacterList.lastCardId,
   characterLayout: ['masonry', 'cover', 'contain'].includes(savedCharacterLayout)
     ? savedCharacterLayout
     : savedCharacterLayout === 'legacy'
       ? (localStorage.getItem('kisekae3-character-thumbnail-fit') === 'cover' ? 'cover' : 'contain')
       : 'masonry',
-  randomFolderActive: false,
-  randomCharacterIds: [],
+  randomFolderActive: savedCharacterList.random,
+  randomCharacterIds: savedCharacterList.randomIds,
   organizerFolders: { character: '', clothes: '' },
   page: 'home',
   editorSection: 'character',
@@ -118,13 +125,46 @@ function latestGeneratedAt(char) {
   }, 0);
 }
 
-function chooseRandomCharacters(characters, count) {
+function shuffleCharacters(characters) {
   const shuffled = [...characters];
   for (let i = shuffled.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
-  return shuffled.slice(0, count);
+  return shuffled;
+}
+
+function loadCharacterListState() {
+  const fallback = { folder: '', random: false, randomIds: [], loadedCount: CHARACTER_PAGE_SIZE, lastCardId: null, sort: null };
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(CHARACTER_LIST_STORAGE_KEY) || 'null');
+    if (!saved || typeof saved !== 'object') return fallback;
+    return {
+      folder: typeof saved.folder === 'string' || saved.folder === null ? saved.folder : fallback.folder,
+      random: saved.random === true,
+      randomIds: Array.isArray(saved.randomIds) ? saved.randomIds.filter((id) => typeof id === 'string') : [],
+      loadedCount: Number.isSafeInteger(saved.loadedCount) && saved.loadedCount > 0 ? saved.loadedCount : fallback.loadedCount,
+      lastCardId: typeof saved.lastCardId === 'string' ? saved.lastCardId : null,
+      sort: typeof saved.sort === 'string' ? saved.sort : null,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function persistCharacterListState() {
+  try {
+    sessionStorage.setItem(CHARACTER_LIST_STORAGE_KEY, JSON.stringify({
+      folder: state.catalogFolders.characters,
+      random: state.randomFolderActive,
+      randomIds: state.randomFolderActive ? state.randomCharacterIds : [],
+      loadedCount: state.characterLoadedCount,
+      lastCardId: state.characterReturnId,
+      sort: state.characterSort,
+    }));
+  } catch {
+    // sessionStorage が使えない環境ではメモリ上の state だけで復元する
+  }
 }
 
 function generatedVersions(char, dressId) {
@@ -255,38 +295,196 @@ function versionLabel(version, index) {
 // views
 // ---------------------------------------------------------------------------
 
-function renderCharacterList() {
-  app.className = 'home-page';
-  const characterFolders = groupedCatalogItems(state.catalog.characters, state.catalog.groups.characters);
-  const visibleCharacters = state.randomFolderActive
-    ? state.randomCharacterIds.map((id) => state.catalog.characters.find((character) => character.id === id)).filter(Boolean)
-    : characterFolders.find(([group]) => group === state.catalogFolders.characters)?.[1] || [];
-  const sortedCharacters = [...visibleCharacters];
-  if (state.characterSort === 'generated') {
-    sortedCharacters.sort((a, b) => generatedCount(b) - generatedCount(a));
-  } else if (state.characterSort === 'recent') {
-    sortedCharacters.sort((a, b) => latestGeneratedAt(b) - latestGeneratedAt(a));
+function sortedCharacterListItems() {
+  if (state.randomFolderActive) {
+    // ランダムはフォルダ選択時に全キャラを 1 回シャッフルした順をそのまま流す。
+    // 消えたキャラは除き、あとから追加されたキャラは末尾にランダム順で足す
+    const byId = new Map(state.catalog.characters.map((character) => [character.id, character]));
+    const ordered = state.randomCharacterIds.map((id) => byId.get(id)).filter(Boolean);
+    const known = new Set(ordered.map((character) => character.id));
+    const added = shuffleCharacters(state.catalog.characters.filter((character) => !known.has(character.id)));
+    const items = [...ordered, ...added];
+    if (added.length || items.length !== state.randomCharacterIds.length) {
+      state.randomCharacterIds = items.map((character) => character.id);
+    }
+    return items;
   }
-  const pageCount = Math.ceil(sortedCharacters.length / CHARACTER_PAGE_SIZE);
-  state.characterPage = Math.min(state.characterPage, Math.max(pageCount, 1));
-  const pageCharacters = sortedCharacters.slice((state.characterPage - 1) * CHARACTER_PAGE_SIZE, state.characterPage * CHARACTER_PAGE_SIZE);
-  const cards = pageCharacters.map((c) => `
-    <a class="card character-card" href="#/char/${esc(c.id)}" aria-label="${esc(c.name)}">
+  const characterFolders = groupedCatalogItems(state.catalog.characters, state.catalog.groups.characters);
+  const items = [...(characterFolders.find(([group]) => group === state.catalogFolders.characters)?.[1] || [])];
+  if (state.characterSort === 'generated') {
+    items.sort((a, b) => generatedCount(b) - generatedCount(a));
+  } else if (state.characterSort === 'recent') {
+    items.sort((a, b) => latestGeneratedAt(b) - latestGeneratedAt(a));
+  }
+  return items;
+}
+
+function characterCardHtml(c) {
+  return `
+    <a class="card character-card" href="#/char/${esc(c.id)}" data-character-id="${esc(c.id)}" aria-label="${esc(c.name)}">
       ${c.iconUrl ? `<img src="${c.iconUrl}" alt="" loading="lazy" />` : '<div class="noimg">No icon</div>'}
       <div class="meta">
         <span class="count">${generatedCount(c)} / ${state.catalog.clothes.length} 生成済み</span>
       </div>
-    </a>`).join('');
-  const randomMoreLimit = Math.min(CHARACTER_PAGE_SIZE, state.catalog.characters.length);
-  const randomMoreButton = state.randomFolderActive && visibleCharacters.length < randomMoreLimit
-    ? `<div class="random-more"><button type="button" id="random-more">さらに表示（${visibleCharacters.length} / ${randomMoreLimit}）</button></div>`
-    : '';
-  const paginationNav = (bottom) => pageCount > 1 ? `<nav class="character-pagination${bottom ? ' character-pagination-bottom' : ''}" aria-label="キャラ一覧のページ">
-    <button type="button" data-character-page="${state.characterPage - 1}" ${state.characterPage === 1 ? 'disabled' : ''}>前へ</button>
-    <span>${state.characterPage} / ${pageCount}ページ</span>
-    <button type="button" data-character-page="${state.characterPage + 1}" ${state.characterPage === pageCount ? 'disabled' : ''}>次へ</button>
-  </nav>` : '';
-  const characterListControls = (state.randomFolderActive || state.catalogFolders.characters !== null) && visibleCharacters.length
+    </a>`;
+}
+
+// 並び替え・画像表示・フォルダを変えたときだけ呼ぶ。1 batch に戻して先頭から描き直す
+function resetCharacterList() {
+  state.characterLoadedCount = CHARACTER_PAGE_SIZE;
+  state.characterReturnId = null;
+  persistCharacterListState();
+  renderCharacterList();
+}
+
+function teardownCharacterList() {
+  characterGridResizeObserver?.disconnect();
+  characterGridResizeObserver = null;
+  characterListObserver?.disconnect();
+  characterListObserver = null;
+  cancelAnimationFrame(characterGridUpdateFrame);
+  characterGridUpdateFrame = 0;
+  characterMasonry = null;
+  characterListView = null;
+  characterScrollAnchor = null;
+}
+
+// Pinterest風レイアウト。追記時は追加したカードだけ測り、グリッド幅が変わったときだけ全カードを測り直す
+function setupCharacterMasonry(grid) {
+  const pending = new Set();
+  const updateMasonry = () => {
+    characterGridUpdateFrame = 0;
+    if (!grid.isConnected) return;
+    const { gridAutoRows, rowGap } = getComputedStyle(grid);
+    const rowHeight = parseFloat(gridAutoRows);
+    const gap = parseFloat(rowGap);
+    if (!Number.isFinite(rowHeight) || rowHeight <= 0 || !Number.isFinite(gap)) return;
+    const cards = [...pending];
+    pending.clear();
+    const spans = cards.map((card) => {
+      const image = card.querySelector('img');
+      const imageHeight = image
+        ? image.naturalWidth && image.naturalHeight
+          ? image.getBoundingClientRect().width * image.naturalHeight / image.naturalWidth
+          : image.complete
+            ? image.getBoundingClientRect().height
+            // 読み込み前は仮に縦長 3:4 として場所を取り、読み込み後に測り直す
+            : image.getBoundingClientRect().width * 4 / 3
+        : card.querySelector('.noimg')?.getBoundingClientRect().height || 0;
+      const metaHeight = card.querySelector('.meta')?.getBoundingClientRect().height || 0;
+      const styles = getComputedStyle(card);
+      const borders = parseFloat(styles.borderTopWidth) + parseFloat(styles.borderBottomWidth);
+      return Math.max(1, Math.ceil((imageHeight + metaHeight + borders + gap) / (rowHeight + gap)));
+    });
+    cards.forEach((card, index) => {
+      card.style.gridRowEnd = `span ${spans[index]}`;
+    });
+    keepCharacterScrollAnchor();
+  };
+  const schedule = () => {
+    if (!characterGridUpdateFrame) characterGridUpdateFrame = requestAnimationFrame(updateMasonry);
+  };
+  const addCards = (cards) => {
+    cards.forEach((card) => {
+      pending.add(card);
+      card.querySelector('img')?.addEventListener('load', () => {
+        pending.add(card);
+        schedule();
+      }, { once: true });
+    });
+    schedule();
+  };
+  let previousGridWidth = null;
+  characterGridResizeObserver = new ResizeObserver(([entry]) => {
+    const width = entry.contentRect.width;
+    if (previousGridWidth === null || Math.abs(width - previousGridWidth) >= 1) {
+      const isFirst = previousGridWidth === null;
+      previousGridWidth = width;
+      if (!isFirst) grid.querySelectorAll('.character-card').forEach((card) => pending.add(card));
+      schedule();
+    }
+  });
+  characterGridResizeObserver.observe(grid);
+  return { addCards };
+}
+
+// 詳細から戻ったとき、画像の読み込みでレイアウトがずれても少しの間だけカード位置を保つ
+function keepCharacterScrollAnchor() {
+  const anchor = characterScrollAnchor;
+  if (!anchor) return;
+  if (performance.now() > anchor.until) {
+    characterScrollAnchor = null;
+    return;
+  }
+  anchor.card.isConnected && anchor.card.scrollIntoView({ block: 'center' });
+}
+
+function startCharacterScrollAnchor(card) {
+  const stop = () => {
+    characterScrollAnchor = null;
+    ['wheel', 'touchstart', 'keydown', 'pointerdown'].forEach((type) => window.removeEventListener(type, stop, true));
+  };
+  characterScrollAnchor = { card, until: performance.now() + 2000 };
+  ['wheel', 'touchstart', 'keydown', 'pointerdown'].forEach((type) => window.addEventListener(type, stop, { capture: true, once: true }));
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (card.isConnected) card.scrollIntoView({ block: 'center' });
+  }));
+}
+
+function updateCharacterLoadMore() {
+  const view = characterListView;
+  if (!view) return;
+  const loaded = Math.min(state.characterLoadedCount, view.items.length);
+  const done = loaded >= view.items.length;
+  view.loadMore.hidden = done;
+  view.button.textContent = `さらに表示（${loaded} / ${view.items.length}）`;
+}
+
+// 一番下に来たら次の 1 batch を追記する（全体は描き直さない）
+function loadMoreCharacters({ focus = false } = {}) {
+  const view = characterListView;
+  if (!view || !view.grid.isConnected) return;
+  const start = Math.min(state.characterLoadedCount, view.items.length);
+  const next = view.items.slice(start, start + CHARACTER_PAGE_SIZE);
+  if (!next.length) return;
+  view.grid.insertAdjacentHTML('beforeend', next.map(characterCardHtml).join(''));
+  state.characterLoadedCount = start + next.length;
+  const newCards = [...view.grid.querySelectorAll('.character-card')].slice(start);
+  characterMasonry?.addCards(newCards);
+  updateCharacterLoadMore();
+  persistCharacterListState();
+  if (focus) newCards[0]?.focus();
+  // 追記したカードのレイアウトが済んでから、sentinel がまだ見えているかもう一度判定させる
+  observeCharacterSentinel();
+}
+
+function observeCharacterSentinel() {
+  const view = characterListView;
+  const observer = characterListObserver;
+  if (!view || !observer) return;
+  observer.unobserve(view.sentinel);
+  // Pinterest風の高さ計算（requestAnimationFrame）が終わってから監視を始める
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (characterListObserver === observer && view.sentinel.isConnected && !view.loadMore.hidden) {
+      observer.observe(view.sentinel);
+    }
+  }));
+}
+
+function renderCharacterList() {
+  teardownCharacterList();
+  app.className = 'home-page';
+  const characterFolders = groupedCatalogItems(state.catalog.characters, state.catalog.groups.characters);
+  const showList = state.randomFolderActive || state.catalogFolders.characters !== null;
+  const items = showList ? sortedCharacterListItems() : [];
+  const returnIndex = state.characterReturnId ? items.findIndex((c) => c.id === state.characterReturnId) : -1;
+  if (returnIndex >= 0) {
+    // 戻り先のカードが含まれるまで batch を展開する
+    state.characterLoadedCount = Math.max(state.characterLoadedCount, Math.ceil((returnIndex + 1) / CHARACTER_PAGE_SIZE) * CHARACTER_PAGE_SIZE);
+  }
+  state.characterLoadedCount = Math.max(CHARACTER_PAGE_SIZE, state.characterLoadedCount || 0);
+  const cards = items.slice(0, state.characterLoadedCount).map(characterCardHtml).join('');
+  const characterListControls = showList && items.length
     ? `<div class="character-list-toolbar">
         <label for="character-layout">画像表示</label>
         <select id="character-layout">
@@ -294,27 +492,86 @@ function renderCharacterList() {
           <option value="cover" ${state.characterLayout === 'cover' ? 'selected' : ''}>余白なし（トリミング）</option>
           <option value="contain" ${state.characterLayout === 'contain' ? 'selected' : ''}>全体表示（余白あり）</option>
         </select>
-        <label for="character-sort">並び替え</label>
+        ${state.randomFolderActive ? '' : `<label for="character-sort">並び替え</label>
         <select id="character-sort">
           <option value="default" ${state.characterSort === 'default' ? 'selected' : ''}>登録順</option>
           <option value="generated" ${state.characterSort === 'generated' ? 'selected' : ''}>生成数が多い順</option>
           <option value="recent" ${state.characterSort === 'recent' ? 'selected' : ''}>最近生成した順</option>
-        </select>
-        <span class="character-list-count">${visibleCharacters.length}キャラ</span>
-      </div>
-      ${paginationNav(false)}`
+        </select>`}
+        <span class="character-list-count">${items.length}キャラ</span>
+      </div>`
     : '';
+  const loadMore = `<div class="character-load-more">
+      <div class="character-load-sentinel" aria-hidden="true"></div>
+      <button type="button" id="character-load-more"></button>
+    </div>`;
   app.innerHTML = `
     ${renderPageNav('home')}
     <h2>キャラを選ぶ</h2>
     ${state.catalog.characters.length ? `
       ${renderFolderPicker(characterFolders, state.catalogFolders.characters, 'characters', 'characters', { random: true, randomActive: state.randomFolderActive })}
-      ${!state.randomFolderActive && state.catalogFolders.characters === null
+      ${!showList
         ? '<p class="empty">フォルダを選ぶと中身が表示されます。</p>'
-        : visibleCharacters.length ? `${characterListControls}<div class="character-grid ${state.characterLayout === 'masonry' ? '' : `is-${state.characterLayout}`}">${cards}</div>${randomMoreButton}${paginationNav(true)}` : '<p class="empty">このフォルダにキャラはいません。</p>'}`
-      : '<p class="empty">store/characters/ に chara1.png のような画像を追加してください。</p>'}
-    <details class="upload-section">
-      <summary>キャラ・服を追加</summary>
+        : items.length ? `${characterListControls}<div class="character-grid ${state.characterLayout === 'masonry' ? '' : `is-${state.characterLayout}`}">${cards}</div>${loadMore}` : '<p class="empty">このフォルダにキャラはいません。</p>'}`
+      : `<p class="empty">store/characters/ に chara1.png のような画像を追加するか、<a href="#/upload">キャラ・服を追加</a>から登録してください。</p>`}`;
+
+  const grid = app.querySelector('.character-grid');
+  if (grid) {
+    characterListView = {
+      items,
+      grid,
+      loadMore: app.querySelector('.character-load-more'),
+      sentinel: app.querySelector('.character-load-sentinel'),
+      button: app.querySelector('#character-load-more'),
+    };
+    if (!grid.matches('.is-cover, .is-contain')) {
+      characterMasonry = setupCharacterMasonry(grid);
+      characterMasonry.addCards([...grid.querySelectorAll('.character-card')]);
+    }
+    updateCharacterLoadMore();
+    characterListView.button.addEventListener('click', () => loadMoreCharacters({ focus: true }));
+    if ('IntersectionObserver' in window) {
+      characterListObserver = new IntersectionObserver((entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) loadMoreCharacters();
+      }, { rootMargin: '0px 0px 600px 0px' });
+      observeCharacterSentinel();
+    }
+    grid.addEventListener('click', (event) => {
+      const card = event.target.closest('.character-card');
+      if (!card) return;
+      state.characterReturnId = card.dataset.characterId;
+      persistCharacterListState();
+    });
+    if (returnIndex >= 0) {
+      const card = [...grid.querySelectorAll('.character-card')][returnIndex];
+      if (card) startCharacterScrollAnchor(card);
+    }
+  }
+  if (state.characterReturnId) {
+    state.characterReturnId = null;
+  }
+  persistCharacterListState();
+
+  app.querySelector('#character-sort')?.addEventListener('change', (event) => {
+    state.characterSort = event.currentTarget.value;
+    resetCharacterList();
+  });
+  app.querySelector('#character-layout')?.addEventListener('change', (event) => {
+    state.characterLayout = event.currentTarget.value;
+    localStorage.setItem('kisekae3-character-layout', state.characterLayout);
+    resetCharacterList();
+  });
+  app.querySelectorAll('.catalog-folder').forEach((button) => {
+    button.addEventListener('click', selectCatalogFolder);
+  });
+}
+
+function renderUploadPage() {
+  app.className = 'catalog-page upload-page';
+  app.innerHTML = `
+    ${renderPageNav('upload')}
+    <h2>キャラ・服を追加</h2>
+    <section class="upload-section">
       <div class="upload-grid">
         ${['character', 'clothes'].map((type) => `
           <form class="upload-form" data-type="${type}">
@@ -326,82 +583,8 @@ function renderCharacterList() {
             <span class="upload-status" role="status"></span>
           </form>`).join('')}
       </div>
-    </details>`;
+    </section>`;
 
-  characterGridResizeObserver?.disconnect();
-  cancelAnimationFrame(characterGridUpdateFrame);
-  characterGridUpdateFrame = 0;
-  const characterGrid = app.querySelector('.character-grid:not(.is-cover):not(.is-contain)');
-  if (characterGrid) {
-    const cards = [...characterGrid.querySelectorAll('.character-card')];
-    const updateMasonry = () => {
-      characterGridUpdateFrame = 0;
-      const { gridAutoRows, rowGap } = getComputedStyle(characterGrid);
-      const rowHeight = parseFloat(gridAutoRows);
-      const gap = parseFloat(rowGap);
-      if (!Number.isFinite(rowHeight) || rowHeight <= 0 || !Number.isFinite(gap)) return;
-      const spans = cards.map((card) => {
-        const image = card.querySelector('img');
-        const imageHeight = image
-          ? image.naturalWidth && image.naturalHeight
-            ? image.getBoundingClientRect().width * image.naturalHeight / image.naturalWidth
-            : image.getBoundingClientRect().height
-          : card.querySelector('.noimg')?.getBoundingClientRect().height || 0;
-        const metaHeight = card.querySelector('.meta')?.getBoundingClientRect().height || 0;
-        const styles = getComputedStyle(card);
-        const borders = parseFloat(styles.borderTopWidth) + parseFloat(styles.borderBottomWidth);
-        return Math.max(1, Math.ceil((imageHeight + metaHeight + borders + gap) / (rowHeight + gap)));
-      });
-      cards.forEach((card, index) => {
-        card.style.gridRowEnd = `span ${spans[index]}`;
-      });
-    };
-    const scheduleMasonryUpdate = () => {
-      if (!characterGridUpdateFrame) {
-        characterGridUpdateFrame = requestAnimationFrame(updateMasonry);
-      }
-    };
-    cards.forEach((card) => {
-      card.querySelector('img')?.addEventListener('load', scheduleMasonryUpdate, { once: true });
-    });
-    scheduleMasonryUpdate();
-    let previousGridWidth = null;
-    characterGridResizeObserver = new ResizeObserver(([entry]) => {
-      const width = entry.contentRect.width;
-      if (previousGridWidth === null || Math.abs(width - previousGridWidth) >= 1) {
-        previousGridWidth = width;
-        scheduleMasonryUpdate();
-      }
-    });
-    characterGridResizeObserver.observe(characterGrid);
-  }
-
-  app.querySelector('#character-sort')?.addEventListener('change', (event) => {
-    state.characterSort = event.currentTarget.value;
-    state.characterPage = 1;
-    renderCharacterList();
-  });
-  app.querySelector('#character-layout')?.addEventListener('change', (event) => {
-    state.characterLayout = event.currentTarget.value;
-    localStorage.setItem('kisekae3-character-layout', state.characterLayout);
-    renderCharacterList();
-  });
-  app.querySelector('#random-more')?.addEventListener('click', () => {
-    const chosen = new Set(state.randomCharacterIds);
-    const remaining = state.catalog.characters.filter((character) => !chosen.has(character.id));
-    const addCount = Math.min(RANDOM_CHARACTER_STEP, randomMoreLimit - visibleCharacters.length);
-    state.randomCharacterIds = [
-      ...state.randomCharacterIds,
-      ...chooseRandomCharacters(remaining, addCount).map((character) => character.id),
-    ];
-    renderCharacterList();
-  });
-  app.querySelectorAll('[data-character-page]').forEach((button) => {
-    button.addEventListener('click', () => {
-      state.characterPage = Number(button.dataset.characterPage);
-      renderCharacterList();
-    });
-  });
   app.querySelectorAll('.upload-form').forEach((form) => {
     const fileInput = form.querySelector('[name="image"]');
     fileInput.addEventListener('change', () => {
@@ -411,9 +594,6 @@ function renderCharacterList() {
         : '';
     });
     form.addEventListener('submit', uploadImage);
-  });
-  app.querySelectorAll('.catalog-folder').forEach((button) => {
-    button.addEventListener('click', selectCatalogFolder);
   });
 }
 
@@ -554,16 +734,15 @@ function selectCatalogFolder(event) {
   if (folderView === 'characters' || folderView === 'clothes') {
     if (folderView === 'characters' && randomFolder === 'true') {
       state.randomFolderActive = true;
-      state.randomCharacterIds = chooseRandomCharacters(state.catalog.characters, RANDOM_CHARACTER_STEP).map((character) => character.id);
-      state.characterPage = 1;
-      renderCharacterList();
+      state.randomCharacterIds = shuffleCharacters(state.catalog.characters).map((character) => character.id);
+      resetCharacterList();
       return;
     }
     state.catalogFolders[folderView] = group;
     if (folderView === 'characters') {
       state.randomFolderActive = false;
-      state.characterPage = 1;
-      renderCharacterList();
+      state.randomCharacterIds = [];
+      resetCharacterList();
       return;
     }
     renderClothesPage();
@@ -1730,11 +1909,7 @@ async function uploadImage(event) {
       .filter(Boolean)
       .join('\n');
     const result = app.querySelector(`.upload-form[data-type="${type}"] .upload-status`);
-    if (result) {
-      const section = app.querySelector('.upload-section');
-      if (section) section.open = true;
-      result.textContent = summary;
-    }
+    if (result) result.textContent = summary;
   } finally {
     state.uploading = false;
     buttons.forEach((button) => {
@@ -1821,8 +1996,9 @@ async function createCatalogGroup(event) {
 // ---------------------------------------------------------------------------
 
 function route() {
+  teardownCharacterList();
   const m = location.hash.match(/^#\/char\/([A-Za-z0-9_-]+)/);
-  const pageMatch = location.hash.match(/^#\/(clothes|editor)(?:\/(character|clothes))?(?:\/|$)/);
+  const pageMatch = location.hash.match(/^#\/(clothes|editor|upload)(?:\/(character|clothes))?(?:\/|$)/);
   state.currentCharacter = m ? m[1] : null;
   state.routeHash = location.hash;
   state.page = pageMatch ? pageMatch[1] : 'home';
@@ -1862,6 +2038,7 @@ function renderCurrentView() {
   if (state.currentCharacter) renderCharacterView();
   else if (state.page === 'clothes') renderClothesPage();
   else if (state.page === 'editor') renderCatalogEditorPage(state.editorSection);
+  else if (state.page === 'upload') renderUploadPage();
   else renderCharacterList();
 }
 
