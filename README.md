@@ -77,6 +77,9 @@ ComfyUIを起動し、ワークフローが参照するモデルとカスタム�
 
 - `COMFYUI_URL` — ComfyUI URL（既定値 `http://127.0.0.1:8188`）
 - `SERVER_CHECK_PORT` — ComfyUI が動く PC の起動確認に使う TCP ポート（既定値 `3389` = RDP）。ヘッダーの状態表示で使用し、アクセス時と画面遷移時にのみ確認します
+- `WOL_MAC` — ComfyUI が動く PC の MAC アドレス。設定すると、PC 停止中の表示の横に Wake on LAN の「起動」ボタンが出ます（kisekae3 と同じ LAN にいる必要あり）
+- `WOL_BROADCAST` — マジックパケットの送信先（既定値 `255.255.255.255`）
+- `WOL_PORT` — マジックパケットの送信ポート（既定値 `9`）
 - `COMFYUI_WORKFLOW` — 別のワークフローJSONを使う場合のファイルパス
 - `GENERATOR=mock` — ComfyUIを使わずプレースホルダー画像を生成する開発用モード
 

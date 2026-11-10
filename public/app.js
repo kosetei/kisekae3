@@ -1855,7 +1855,9 @@ let serverStatusRequestId = 0;
 async function refreshServerStatus() {
   const el = document.getElementById('server-status');
   if (!el) return;
+  const wakeButton = document.getElementById('wake-button');
   const requestId = ++serverStatusRequestId;
+  if (wakeButton) wakeButton.hidden = true;
   el.dataset.state = 'checking';
   el.textContent = '確認中…';
   let status;
@@ -1886,8 +1888,34 @@ async function refreshServerStatus() {
     el.dataset.state = 'down';
     el.textContent = 'PC 停止中';
     el.title = `${status.host}: PC が応答しません（スリープ中の可能性）`;
+    if (wakeButton && status.wakeAvailable) {
+      wakeButton.hidden = false;
+      wakeButton.disabled = false;
+      wakeButton.textContent = '起動';
+    }
   }
 }
+
+async function wakeServer() {
+  const wakeButton = document.getElementById('wake-button');
+  const el = document.getElementById('server-status');
+  wakeButton.disabled = true;
+  wakeButton.textContent = '送信中…';
+  try {
+    const res = await fetch('/api/wake', { method: 'POST' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+    wakeButton.hidden = true;
+    el.textContent = '起動信号を送信しました';
+    el.title = '起動まで少し待ってから、再読み込みか画面遷移で状態を再確認してください';
+  } catch (e) {
+    wakeButton.disabled = false;
+    wakeButton.textContent = '起動';
+    alert(`起動信号を送れませんでした: ${e.message}`);
+  }
+}
+
+document.getElementById('wake-button')?.addEventListener('click', wakeServer);
 
 refreshServerStatus();
 
