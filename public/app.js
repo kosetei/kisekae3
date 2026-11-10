@@ -278,8 +278,8 @@ function renderCharacterList() {
       </div>
     </a>`).join('');
   const randomMoreLimit = Math.min(CHARACTER_PAGE_SIZE, state.catalog.characters.length);
-  const randomMoreButton = state.randomFolderActive && state.randomCharacterIds.length < randomMoreLimit
-    ? `<div class="random-more"><button type="button" id="random-more">さらに表示（${state.randomCharacterIds.length} / ${randomMoreLimit}）</button></div>`
+  const randomMoreButton = state.randomFolderActive && visibleCharacters.length < randomMoreLimit
+    ? `<div class="random-more"><button type="button" id="random-more">さらに表示（${visibleCharacters.length} / ${randomMoreLimit}）</button></div>`
     : '';
   const paginationNav = (bottom) => pageCount > 1 ? `<nav class="character-pagination${bottom ? ' character-pagination-bottom' : ''}" aria-label="キャラ一覧のページ">
     <button type="button" data-character-page="${state.characterPage - 1}" ${state.characterPage === 1 ? 'disabled' : ''}>前へ</button>
@@ -386,10 +386,10 @@ function renderCharacterList() {
     localStorage.setItem('kisekae3-character-layout', state.characterLayout);
     renderCharacterList();
   });
-  document.getElementById('random-more')?.addEventListener('click', () => {
+  app.querySelector('#random-more')?.addEventListener('click', () => {
     const chosen = new Set(state.randomCharacterIds);
     const remaining = state.catalog.characters.filter((character) => !chosen.has(character.id));
-    const addCount = Math.min(RANDOM_CHARACTER_STEP, CHARACTER_PAGE_SIZE - state.randomCharacterIds.length);
+    const addCount = Math.min(RANDOM_CHARACTER_STEP, randomMoreLimit - visibleCharacters.length);
     state.randomCharacterIds = [
       ...state.randomCharacterIds,
       ...chooseRandomCharacters(remaining, addCount).map((character) => character.id),
@@ -534,8 +534,8 @@ function renderFolderPicker(folders, activeGroup, view, type = view, options = {
       ${random ? `
         <button type="button" class="catalog-folder ${randomActive ? 'active' : ''}"
           data-folder-view="${view}" data-type="${type}" data-random-folder="true"
-          title="全キャラから${Math.min(RANDOM_CHARACTER_STEP, state.catalog.characters.length)}人をランダムに選択"
-          aria-label="ランダム、全キャラから${Math.min(RANDOM_CHARACTER_STEP, state.catalog.characters.length)}人を選択"
+          title="全キャラからランダムに表示"
+          aria-label="ランダム、全キャラからランダムに表示"
           aria-pressed="${randomActive}">
           <span class="catalog-folder-icon" aria-hidden="true">🎲</span>
           <span class="catalog-folder-label">ランダム</span>
