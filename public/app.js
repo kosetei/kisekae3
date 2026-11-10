@@ -142,27 +142,31 @@ function loadCachedComfyuiStatus() {
   try {
     const cached = JSON.parse(localStorage.getItem(COMFYUI_STATUS_CACHE_KEY) || 'null');
     if (cached && COMFYUI_STATES.includes(cached.state) && cached.state !== 'unknown') {
-      return { state: cached.state, mock: cached.mock === true, checked: false };
+      return {
+        state: cached.state, mock: cached.mock === true, checked: false,
+        startAvailable: cached.startAvailable === true, autoStart: cached.autoStart === true,
+      };
     }
   } catch {
     // 壊れたキャッシュは無視して未確認扱いにする
   }
-  return { state: 'unknown', mock: false, checked: false };
+  return { state: 'unknown', mock: false, checked: false, startAvailable: false, autoStart: false };
 }
 
-function setComfyuiStatus(nextState, { mock = false } = {}) {
+function setComfyuiStatus(nextState, { mock = false, startAvailable = state.comfyui.startAvailable, autoStart = state.comfyui.autoStart } = {}) {
   if (!COMFYUI_STATES.includes(nextState)) return;
   const previous = state.comfyui;
-  state.comfyui = { state: nextState, mock, checked: true };
+  state.comfyui = { state: nextState, mock, checked: true, startAvailable, autoStart };
   if (nextState !== 'unknown') {
     try {
-      localStorage.setItem(COMFYUI_STATUS_CACHE_KEY, JSON.stringify({ state: nextState, mock }));
+      localStorage.setItem(COMFYUI_STATUS_CACHE_KEY, JSON.stringify({ state: nextState, mock, startAvailable, autoStart }));
     } catch {
       // 保存できなくても今回の表示には影響しない
     }
   }
   // 判定が終わったら着せ替え画面だけ描き直す（表示が変わらないときは描き直さない）
-  const changed = previous.state !== nextState || previous.mock !== mock || !previous.checked;
+  const changed = previous.state !== nextState || previous.mock !== mock || !previous.checked
+    || previous.startAvailable !== startAvailable || previous.autoStart !== autoStart;
   if (changed && state.catalog && state.currentCharacter && !state.busy) renderCharacterView();
 }
 
@@ -173,15 +177,22 @@ function comfyuiStatusLabel(comfyui = state.comfyui) {
   return 'ComfyUI 確認中';
 }
 
-// 生成できるかどうかと、できないときの理由
+// 生成できるかどうかと、その理由。
+// available: そのまま生成できる / startable: 押すと ComfyUI を起動するか確認する / canPress: 生成ボタンを押せる
 function generationAvailability(comfyui = state.comfyui) {
+  if (comfyui.state === 'down' && comfyui.startAvailable && comfyui.autoStart) {
+    return { available: true, startable: false, canPress: true, reason: 'ComfyUI 応答なし。生成すると先に ComfyUI を自動で起動します（数分かかることがあります）。' };
+  }
+  if (comfyui.state === 'down' && comfyui.startAvailable) {
+    return { available: false, startable: true, canPress: true, reason: 'ComfyUI 応答なし。生成ボタンを押すと、ComfyUI を起動するか確認します。' };
+  }
   if (comfyui.state === 'down') {
-    return { available: false, reason: 'ComfyUI 応答なしのため生成できません。PC や ComfyUI を起動してから、再読み込みか画面を移って状態を確認してください。' };
+    return { available: false, startable: false, canPress: false, reason: 'ComfyUI 応答なしのため生成できません。PC や ComfyUI を起動してから、再読み込みか画面を移って状態を確認してください。' };
   }
   if (comfyui.state === 'starting') {
-    return { available: false, reason: 'ComfyUI 起動中のため生成できません。起動が終わるまでお待ちください。' };
+    return { available: false, startable: false, canPress: false, reason: 'ComfyUI 起動中のため生成できません。起動が終わるまでお待ちください。' };
   }
-  return { available: true, reason: '' };
+  return { available: true, startable: false, canPress: true, reason: '' };
 }
 
 const DRESS_FILTER_LABELS = { all: 'すべて', generated: '生成済みだけ', ungenerated: '未生成だけ' };
@@ -934,7 +945,7 @@ function renderCharacterView() {
           : dressGridHtml}
         <div class="dress-folder-picker">${renderFolderPicker(dressFolders, state.dressFolder, 'dress', 'dress', { all: true, allActive: state.dressFolderAll })}</div>
         ${sel ? `<p class="stage-caption">
-          選択中の服: ${selUrl ? `生成済み (${versions.length}件)` : `未生成${generation.available ? '' : `（${esc(comfyuiStatusLabel())}のため生成できません）`}`}
+          選択中の服: ${selUrl ? `生成済み (${versions.length}件)` : `未生成${generation.canPress ? '' : `（${esc(comfyuiStatusLabel())}のため生成できません）`}`}
         </p>
         ${selectedOutfit?.variants.length > 1 ? `<fieldset class="dress-variant-picker">
           <legend>生成に使う画像</legend>
@@ -1004,12 +1015,12 @@ function renderCharacterView() {
               </option>`).join('')}
           </select>` : ''}
         <div class="generation-actions">
-          <button id="generate-all" ${missing.length && generation.available ? '' : 'disabled'} ${generation.available ? '' : 'aria-describedby="generation-unavailable"'}>未生成を一括生成 (${missing.length})</button>
-          ${sel && !versions.length ? `<button id="generate-selected" ${generation.available ? '' : 'disabled aria-describedby="generation-unavailable"'}>この服を生成</button>` : ''}
-          <button id="regenerate-selected" ${sel && versions.length && generation.available ? '' : 'disabled'} ${generation.available ? '' : 'aria-describedby="generation-unavailable"'}>選択中を再生成</button>
+          <button id="generate-all" ${missing.length && generation.canPress ? '' : 'disabled'} ${generation.reason ? 'aria-describedby="generation-unavailable"' : ''}>未生成を一括生成 (${missing.length})</button>
+          ${sel && !versions.length ? `<button id="generate-selected" ${generation.canPress ? '' : 'disabled'} ${generation.reason ? 'aria-describedby="generation-unavailable"' : ''}>この服を生成</button>` : ''}
+          <button id="regenerate-selected" ${sel && versions.length && generation.canPress ? '' : 'disabled'} ${generation.reason ? 'aria-describedby="generation-unavailable"' : ''}>選択中を再生成</button>
           <span id="status" role="status">${esc(state.status)}</span>
         </div>
-        ${generation.available ? '' : `<p id="generation-unavailable" class="hint generation-unavailable">${esc(generation.reason)}</p>`}
+        ${generation.reason ? `<p id="generation-unavailable" class="hint generation-unavailable">${esc(generation.reason)}</p>` : ''}
         <section class="seed-settings">
           <label for="seed">シード</label>
           <div class="seed-controls">
@@ -1211,7 +1222,7 @@ function renderCharacterView() {
   }
   const generateSelectedBtn = document.getElementById('generate-selected');
   if (generateSelectedBtn) {
-    generateSelectedBtn.disabled = state.busy || !generation.available;
+    generateSelectedBtn.disabled = state.busy || !generation.canPress;
     generateSelectedBtn.addEventListener('click', () => generate(char, sel, false, null, selectedVariantId));
   }
 }
@@ -1656,6 +1667,10 @@ async function deletePromptPreset(scope) {
 async function generate(char, dressId, force = false, promptParts = null, dressVariantId = null) {
   if (state.busy) return;
   const generation = generationAvailability();
+  if (generation.startable) {
+    confirmStartComfyui();
+    return;
+  }
   if (!generation.available) {
     setStatus(generation.reason);
     return;
@@ -1718,6 +1733,10 @@ async function generate(char, dressId, force = false, promptParts = null, dressV
 async function generateAll() {
   const char = findCharacter(state.currentCharacter);
   const missing = state.catalog.clothes.filter((d) => !generatedVersions(char, d.id).length);
+  if (generationAvailability().startable) {
+    confirmStartComfyui();
+    return;
+  }
   for (const d of missing) {
     if (!generationAvailability().available) break;
     await generate(char, d.id, false, {
@@ -1967,8 +1986,23 @@ async function refreshServerStatus() {
     status = null;
   }
   if (requestId !== serverStatusRequestId) return;
+  lastServerStatus = status;
   // 同じ確認結果を服フィルタと生成ボタンにも使う（画面遷移ごとの追加リクエストはしない）
-  if (status) setComfyuiStatus(status.mock || status.comfyui ? 'ready' : 'down', { mock: status.mock === true });
+  if (status) {
+    setComfyuiStatus(status.mock || status.comfyui ? 'ready' : status.starting ? 'starting' : 'down', {
+      mock: status.mock === true,
+      startAvailable: status.startAvailable === true,
+      autoStart: status.autoStart === true,
+    });
+  }
+  // 起動ボタン: COMFYUI_START_TASK があれば WOL も含めた「ComfyUI を起動」、なければ PC 停止中だけ WOL の「起動」
+  const startable = status && !status.mock && !status.comfyui && !status.starting && status.startAvailable
+    && (status.server || status.wakeAvailable);
+  if (wakeButton && startable) {
+    wakeButton.hidden = false;
+    wakeButton.disabled = false;
+    wakeButton.textContent = 'ComfyUI を起動';
+  }
   if (!status) {
     el.dataset.state = 'down';
     el.textContent = '状態を取得できません';
@@ -1981,6 +2015,8 @@ async function refreshServerStatus() {
     el.dataset.state = 'ok';
     el.textContent = 'ComfyUI 稼働中';
     el.title = `${status.host}: PC 起動中 / ComfyUI 応答あり`;
+  } else if (status.starting) {
+    showEnsureProgress(status.ensure);
   } else if (status.server) {
     el.dataset.state = 'comfyui-down';
     el.textContent = 'ComfyUI 停止中';
@@ -1989,7 +2025,7 @@ async function refreshServerStatus() {
     el.dataset.state = 'down';
     el.textContent = 'PC 停止中';
     el.title = `${status.host}: PC が応答しません（スリープ中の可能性）`;
-    if (wakeButton && status.wakeAvailable) {
+    if (wakeButton && status.wakeAvailable && !status.startAvailable) {
       wakeButton.hidden = false;
       wakeButton.disabled = false;
       wakeButton.textContent = '起動';
@@ -2021,7 +2057,111 @@ async function wakeServer() {
   wakeInFlight = false;
 }
 
-document.getElementById('wake-button')?.addEventListener('click', wakeServer);
+// ---------------------------------------------------------------------------
+// ComfyUI のオンデマンド起動（COMFYUI_START_TASK 設定時）
+// 状態確認はアクセス時と画面遷移時だけだが、このタブで起動を始めたときだけ、
+// 終わるまで 5 秒ごとに進み具合（GET /api/comfyui/ensure）を確認する。
+// ---------------------------------------------------------------------------
+
+const ENSURE_POLL_INTERVAL_MS = 5000;
+const ENSURE_PHASE_LABELS = {
+  checking: '確認中',
+  waking: 'PC を起動中',
+  waiting_pc: 'PC の起動待ち',
+  starting: 'ComfyUI を起動中',
+  waiting_comfyui: 'ComfyUI の起動待ち',
+};
+let lastServerStatus = null;
+let ensurePollTimer = 0;
+
+function showEnsureProgress(ensure) {
+  const el = document.getElementById('server-status');
+  if (!el) return;
+  el.dataset.state = 'starting';
+  el.textContent = `ComfyUI 起動中…（${ENSURE_PHASE_LABELS[ensure?.phase] || '処理中'}）`;
+  el.title = ensure?.message || 'ComfyUI を起動しています';
+}
+
+function confirmStartComfyui() {
+  if (!window.confirm('ComfyUI が応答していません。ComfyUI を起動しますか？\n（PC の起動やモデルの読み込みで数分かかることがあります）')) return;
+  startComfyui();
+}
+
+async function startComfyui({ force = false } = {}) {
+  const wakeButton = document.getElementById('wake-button');
+  if (wakeButton) {
+    wakeButton.disabled = true;
+    wakeButton.textContent = '起動中…';
+  }
+  try {
+    const res = await fetch('/api/comfyui/ensure', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(force ? { force: true } : {}),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+    serverStatusRequestId++; // 送信前に始まった状態確認の古い結果を捨てる
+    if (wakeButton) wakeButton.hidden = true;
+    handleEnsureProgress(body);
+  } catch (e) {
+    if (wakeButton) {
+      wakeButton.disabled = false;
+      wakeButton.textContent = 'ComfyUI を起動';
+    }
+    alert(`ComfyUI の起動を始められませんでした: ${e.message}`);
+  }
+}
+
+function handleEnsureProgress(ensure) {
+  clearTimeout(ensurePollTimer);
+  ensurePollTimer = 0;
+  if (ensure.inProgress) {
+    setComfyuiStatus('starting');
+    showEnsureProgress(ensure);
+    setStatus(ensure.message || 'ComfyUI を起動しています');
+    ensurePollTimer = setTimeout(pollEnsureProgress, ENSURE_POLL_INTERVAL_MS);
+    return;
+  }
+  finishEnsure(ensure);
+}
+
+async function pollEnsureProgress() {
+  let ensure;
+  try {
+    const res = await fetch('/api/comfyui/ensure', { cache: 'no-store' });
+    ensure = res.ok ? await res.json() : null;
+  } catch {
+    ensure = null;
+  }
+  // 一時的に取得できなかったときは次の周期でもう一度確認する
+  if (!ensure) {
+    ensurePollTimer = setTimeout(pollEnsureProgress, ENSURE_POLL_INTERVAL_MS);
+    return;
+  }
+  handleEnsureProgress(ensure);
+}
+
+async function finishEnsure(ensure) {
+  if (ensure.phase === 'ready' || ensure.phase === 'already_running') {
+    setStatus('ComfyUI が起動しました。もう一度生成ボタンを押してください');
+    await refreshServerStatus();
+    return;
+  }
+  await refreshServerStatus();
+  if (ensure.phase === 'blocked_vram') {
+    if (window.confirm(`${ensure.message}\nそれでも ComfyUI を起動しますか？`)) startComfyui({ force: true });
+    else setStatus(ensure.message);
+    return;
+  }
+  setStatus(ensure.message || 'ComfyUI を起動できませんでした');
+  alert(ensure.message || 'ComfyUI を起動できませんでした');
+}
+
+document.getElementById('wake-button')?.addEventListener('click', () => {
+  if (lastServerStatus?.startAvailable) startComfyui();
+  else wakeServer();
+});
 
 refreshServerStatus();
 
