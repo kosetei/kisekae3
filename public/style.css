@@ -119,6 +119,8 @@ a { color: var(--link); }
 .character-list-count { margin-left: auto; }
 .character-pagination { justify-content: center; }
 .character-pagination-bottom { margin-top: 18px; }
+.random-more { display: flex; justify-content: center; margin-top: 18px; }
+.random-more button { padding: 6px 16px; }
 .character-pagination button { padding: 6px 12px; }
 .card {
   background: var(--surface);
