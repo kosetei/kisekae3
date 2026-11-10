@@ -10,6 +10,11 @@ const savedCharacterLayout = localStorage.getItem('kisekae3-character-layout');
 const savedDressFilter = localStorage.getItem('kisekae3-dress-filter');
 let characterGridResizeObserver = null;
 let characterGridUpdateFrame = 0;
+// トップのキャラ一覧で 1 ページに表示する数。ランダム表示の「さらに表示」の上限も同じ数
+const CHARACTER_PAGE_SIZE = 30;
+// ランダム表示で最初に出す数と、「さらに表示」1 回で増やす数
+const RANDOM_CHARACTER_STEP = 6;
+
 const state = {
   catalog: null,
   selectedCatalogItems: { character: new Set(), clothes: new Set() },
@@ -262,9 +267,9 @@ function renderCharacterList() {
   } else if (state.characterSort === 'recent') {
     sortedCharacters.sort((a, b) => latestGeneratedAt(b) - latestGeneratedAt(a));
   }
-  const pageCount = Math.ceil(sortedCharacters.length / 30);
+  const pageCount = Math.ceil(sortedCharacters.length / CHARACTER_PAGE_SIZE);
   state.characterPage = Math.min(state.characterPage, Math.max(pageCount, 1));
-  const pageCharacters = sortedCharacters.slice((state.characterPage - 1) * 30, state.characterPage * 30);
+  const pageCharacters = sortedCharacters.slice((state.characterPage - 1) * CHARACTER_PAGE_SIZE, state.characterPage * CHARACTER_PAGE_SIZE);
   const cards = pageCharacters.map((c) => `
     <a class="card character-card" href="#/char/${esc(c.id)}" aria-label="${esc(c.name)}">
       ${c.iconUrl ? `<img src="${c.iconUrl}" alt="" loading="lazy" />` : '<div class="noimg">No icon</div>'}
@@ -272,6 +277,10 @@ function renderCharacterList() {
         <span class="count">${generatedCount(c)} / ${state.catalog.clothes.length} 生成済み</span>
       </div>
     </a>`).join('');
+  const randomMoreLimit = Math.min(CHARACTER_PAGE_SIZE, state.catalog.characters.length);
+  const randomMoreButton = state.randomFolderActive && visibleCharacters.length < randomMoreLimit
+    ? `<div class="random-more"><button type="button" id="random-more">さらに表示（${visibleCharacters.length} / ${randomMoreLimit}）</button></div>`
+    : '';
   const paginationNav = (bottom) => pageCount > 1 ? `<nav class="character-pagination${bottom ? ' character-pagination-bottom' : ''}" aria-label="キャラ一覧のページ">
     <button type="button" data-character-page="${state.characterPage - 1}" ${state.characterPage === 1 ? 'disabled' : ''}>前へ</button>
     <span>${state.characterPage} / ${pageCount}ページ</span>
@@ -302,7 +311,7 @@ function renderCharacterList() {
       ${renderFolderPicker(characterFolders, state.catalogFolders.characters, 'characters', 'characters', { random: true, randomActive: state.randomFolderActive })}
       ${!state.randomFolderActive && state.catalogFolders.characters === null
         ? '<p class="empty">フォルダを選ぶと中身が表示されます。</p>'
-        : visibleCharacters.length ? `${characterListControls}<div class="character-grid ${state.characterLayout === 'masonry' ? '' : `is-${state.characterLayout}`}">${cards}</div>${paginationNav(true)}` : '<p class="empty">このフォルダにキャラはいません。</p>'}`
+        : visibleCharacters.length ? `${characterListControls}<div class="character-grid ${state.characterLayout === 'masonry' ? '' : `is-${state.characterLayout}`}">${cards}</div>${randomMoreButton}${paginationNav(true)}` : '<p class="empty">このフォルダにキャラはいません。</p>'}`
       : '<p class="empty">store/characters/ に chara1.png のような画像を追加してください。</p>'}
     <details class="upload-section">
       <summary>キャラ・服を追加</summary>
@@ -375,6 +384,16 @@ function renderCharacterList() {
   app.querySelector('#character-layout')?.addEventListener('change', (event) => {
     state.characterLayout = event.currentTarget.value;
     localStorage.setItem('kisekae3-character-layout', state.characterLayout);
+    renderCharacterList();
+  });
+  app.querySelector('#random-more')?.addEventListener('click', () => {
+    const chosen = new Set(state.randomCharacterIds);
+    const remaining = state.catalog.characters.filter((character) => !chosen.has(character.id));
+    const addCount = Math.min(RANDOM_CHARACTER_STEP, randomMoreLimit - visibleCharacters.length);
+    state.randomCharacterIds = [
+      ...state.randomCharacterIds,
+      ...chooseRandomCharacters(remaining, addCount).map((character) => character.id),
+    ];
     renderCharacterList();
   });
   app.querySelectorAll('[data-character-page]').forEach((button) => {
@@ -515,8 +534,8 @@ function renderFolderPicker(folders, activeGroup, view, type = view, options = {
       ${random ? `
         <button type="button" class="catalog-folder ${randomActive ? 'active' : ''}"
           data-folder-view="${view}" data-type="${type}" data-random-folder="true"
-          title="全キャラから${Math.min(6, state.catalog.characters.length)}人をランダムに選択"
-          aria-label="ランダム、全キャラから${Math.min(6, state.catalog.characters.length)}人を選択"
+          title="全キャラからランダムに表示"
+          aria-label="ランダム、全キャラからランダムに表示"
           aria-pressed="${randomActive}">
           <span class="catalog-folder-icon" aria-hidden="true">🎲</span>
           <span class="catalog-folder-label">ランダム</span>
@@ -535,7 +554,7 @@ function selectCatalogFolder(event) {
   if (folderView === 'characters' || folderView === 'clothes') {
     if (folderView === 'characters' && randomFolder === 'true') {
       state.randomFolderActive = true;
-      state.randomCharacterIds = chooseRandomCharacters(state.catalog.characters, 6).map((character) => character.id);
+      state.randomCharacterIds = chooseRandomCharacters(state.catalog.characters, RANDOM_CHARACTER_STEP).map((character) => character.id);
       state.characterPage = 1;
       renderCharacterList();
       return;
