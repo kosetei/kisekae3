@@ -14,6 +14,11 @@ let characterGridUpdateFrame = 0;
 const CHARACTER_PAGE_SIZE = 30;
 // ランダム表示で最初に出す数と、「さらに表示」1 回で増やす数
 const RANDOM_CHARACTER_STEP = 6;
+// ComfyUI の状態。unknown: まだ確認できていない / ready: 応答あり（mock を含む）/ down: 応答なし
+// starting: 起動待ち（オンデマンド起動 #10 用。今は設定する処理はない）
+const COMFYUI_STATES = ['unknown', 'ready', 'down', 'starting'];
+// 前回の ComfyUI の状態。初回描画で判定を待たずに服フィルタを決めるのに使う
+const COMFYUI_STATUS_CACHE_KEY = 'kisekae3-comfyui-status';
 
 const state = {
   catalog: null,
@@ -33,7 +38,9 @@ const state = {
   editorSection: 'character',
   dressFolder: '',
   dressFolderAll: false,
-  dressFilter: ['all', 'generated', 'ungenerated'].includes(savedDressFilter) ? savedDressFilter : 'all',
+  // auto は ComfyUI の状態で「すべて」/「生成済みだけ」を切り替える。明示的に選んだ値は auto を選び直すまで尊重する
+  dressFilter: ['auto', 'all', 'generated', 'ungenerated'].includes(savedDressFilter) ? savedDressFilter : 'auto',
+  comfyui: loadCachedComfyuiStatus(),
   currentCharacter: null, // char id when on character view
   selectedDress: null,    // dress id on character view
   selectedDressVariants: {},
@@ -125,6 +132,66 @@ function chooseRandomCharacters(characters, count) {
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
   return shuffled.slice(0, count);
+}
+
+// ---------------------------------------------------------------------------
+// ComfyUI の状態（服フィルタの自動切り替えと生成ボタンの有効・無効に使う）
+// ---------------------------------------------------------------------------
+
+function loadCachedComfyuiStatus() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(COMFYUI_STATUS_CACHE_KEY) || 'null');
+    if (cached && COMFYUI_STATES.includes(cached.state) && cached.state !== 'unknown') {
+      return { state: cached.state, mock: cached.mock === true, checked: false };
+    }
+  } catch {
+    // 壊れたキャッシュは無視して未確認扱いにする
+  }
+  return { state: 'unknown', mock: false, checked: false };
+}
+
+function setComfyuiStatus(nextState, { mock = false } = {}) {
+  if (!COMFYUI_STATES.includes(nextState)) return;
+  const previous = state.comfyui;
+  state.comfyui = { state: nextState, mock, checked: true };
+  if (nextState !== 'unknown') {
+    try {
+      localStorage.setItem(COMFYUI_STATUS_CACHE_KEY, JSON.stringify({ state: nextState, mock }));
+    } catch {
+      // 保存できなくても今回の表示には影響しない
+    }
+  }
+  // 判定が終わったら着せ替え画面だけ描き直す（表示が変わらないときは描き直さない）
+  const changed = previous.state !== nextState || previous.mock !== mock || !previous.checked;
+  if (changed && state.catalog && state.currentCharacter && !state.busy) renderCharacterView();
+}
+
+function comfyuiStatusLabel(comfyui = state.comfyui) {
+  if (comfyui.state === 'ready') return comfyui.mock ? 'モック生成' : 'ComfyUI 応答あり';
+  if (comfyui.state === 'down') return 'ComfyUI 応答なし';
+  if (comfyui.state === 'starting') return 'ComfyUI 起動中';
+  return 'ComfyUI 確認中';
+}
+
+// 生成できるかどうかと、できないときの理由
+function generationAvailability(comfyui = state.comfyui) {
+  if (comfyui.state === 'down') {
+    return { available: false, reason: 'ComfyUI 応答なしのため生成できません。PC や ComfyUI を起動してから、再読み込みか画面を移って状態を確認してください。' };
+  }
+  if (comfyui.state === 'starting') {
+    return { available: false, reason: 'ComfyUI 起動中のため生成できません。起動が終わるまでお待ちください。' };
+  }
+  return { available: true, reason: '' };
+}
+
+const DRESS_FILTER_LABELS = { all: 'すべて', generated: '生成済みだけ', ungenerated: '未生成だけ' };
+
+// 実際に効いている服フィルタ。auto のときは ComfyUI の状態から決める
+function effectiveDressFilter() {
+  if (state.dressFilter !== 'auto') return { filter: state.dressFilter, auto: false };
+  const comfyui = state.comfyui;
+  const filter = comfyui.state === 'down' || comfyui.state === 'starting' ? 'generated' : 'all';
+  return { filter, auto: true, reason: `${comfyuiStatusLabel(comfyui)}${comfyui.checked || comfyui.state === 'unknown' ? '' : '（前回の状態）'}` };
 }
 
 function generatedVersions(char, dressId) {
@@ -790,10 +857,12 @@ function renderCharacterView() {
   const scopedDresses = state.dressFolderAll
     ? dressFolders.flatMap(([, items]) => items)
     : dressFolders.find(([group]) => group === state.dressFolder)?.[1] || [];
+  const dressFilter = effectiveDressFilter();
+  const generation = generationAvailability();
   const dressMatchesFilter = (dress) => {
     const done = generatedVersions(char, dress.id).length > 0;
-    if (state.dressFilter === 'generated') return done;
-    if (state.dressFilter === 'ungenerated') return !done;
+    if (dressFilter.filter === 'generated') return done;
+    if (dressFilter.filter === 'ungenerated') return !done;
     return true;
   };
   // 選択中の服は条件に当てはまらない場合でも一覧に残し、現在の表示とのズレを防ぐ
@@ -851,19 +920,21 @@ function renderCharacterView() {
         <div class="dress-filter-bar">
           <label for="dress-filter">表示する服</label>
           <select id="dress-filter">
+            <option value="auto" ${state.dressFilter === 'auto' ? 'selected' : ''}>自動（ComfyUI の状態で切り替え）</option>
             <option value="all" ${state.dressFilter === 'all' ? 'selected' : ''}>すべて</option>
             <option value="generated" ${state.dressFilter === 'generated' ? 'selected' : ''}>生成済みだけ</option>
             <option value="ungenerated" ${state.dressFilter === 'ungenerated' ? 'selected' : ''}>未生成だけ</option>
           </select>
           <span class="dress-filter-count">表示 ${visibleDresses.length}件 / ${scopeLabel} ${scopedDresses.length}件（生成済み ${scopedGeneratedCount}件）</span>
         </div>
+        ${dressFilter.auto ? `<p class="hint dress-filter-auto" role="status">自動: ${esc(dressFilter.reason)} → ${DRESS_FILTER_LABELS[dressFilter.filter]}（${visibleDresses.length}件）</p>` : ''}
         ${selectedOutsideFilter ? '<p class="hint dress-filter-hint">選択中の服は表示条件に当てはまらないため、この一覧では常に表示します。</p>' : ''}
         ${state.dressFolderAll ? dressGridHtml : state.dressFolder === null
           ? '<p class="empty">フォルダを選ぶと服が表示されます。</p>'
           : dressGridHtml}
         <div class="dress-folder-picker">${renderFolderPicker(dressFolders, state.dressFolder, 'dress', 'dress', { all: true, allActive: state.dressFolderAll })}</div>
         ${sel ? `<p class="stage-caption">
-          選択中の服: ${selUrl ? `生成済み (${versions.length}件)` : '未生成'}
+          選択中の服: ${selUrl ? `生成済み (${versions.length}件)` : `未生成${generation.available ? '' : `（${esc(comfyuiStatusLabel())}のため生成できません）`}`}
         </p>
         ${selectedOutfit?.variants.length > 1 ? `<fieldset class="dress-variant-picker">
           <legend>生成に使う画像</legend>
@@ -933,11 +1004,12 @@ function renderCharacterView() {
               </option>`).join('')}
           </select>` : ''}
         <div class="generation-actions">
-          <button id="generate-all" ${missing.length ? '' : 'disabled'}>未生成を一括生成 (${missing.length})</button>
-          ${sel && !versions.length ? '<button id="generate-selected">この服を生成</button>' : ''}
-          <button id="regenerate-selected" ${sel && versions.length ? '' : 'disabled'}>選択中を再生成</button>
+          <button id="generate-all" ${missing.length && generation.available ? '' : 'disabled'} ${generation.available ? '' : 'aria-describedby="generation-unavailable"'}>未生成を一括生成 (${missing.length})</button>
+          ${sel && !versions.length ? `<button id="generate-selected" ${generation.available ? '' : 'disabled aria-describedby="generation-unavailable"'}>この服を生成</button>` : ''}
+          <button id="regenerate-selected" ${sel && versions.length && generation.available ? '' : 'disabled'} ${generation.available ? '' : 'aria-describedby="generation-unavailable"'}>選択中を再生成</button>
           <span id="status" role="status">${esc(state.status)}</span>
         </div>
+        ${generation.available ? '' : `<p id="generation-unavailable" class="hint generation-unavailable">${esc(generation.reason)}</p>`}
         <section class="seed-settings">
           <label for="seed">シード</label>
           <div class="seed-controls">
@@ -1139,7 +1211,7 @@ function renderCharacterView() {
   }
   const generateSelectedBtn = document.getElementById('generate-selected');
   if (generateSelectedBtn) {
-    generateSelectedBtn.disabled = state.busy;
+    generateSelectedBtn.disabled = state.busy || !generation.available;
     generateSelectedBtn.addEventListener('click', () => generate(char, sel, false, null, selectedVariantId));
   }
 }
@@ -1583,6 +1655,11 @@ async function deletePromptPreset(scope) {
 
 async function generate(char, dressId, force = false, promptParts = null, dressVariantId = null) {
   if (state.busy) return;
+  const generation = generationAvailability();
+  if (!generation.available) {
+    setStatus(generation.reason);
+    return;
+  }
   const seed = Number(state.seed);
   if (!Number.isSafeInteger(seed) || seed < 0) {
     setStatus('シードは0以上の整数を入力してください');
@@ -1642,6 +1719,7 @@ async function generateAll() {
   const char = findCharacter(state.currentCharacter);
   const missing = state.catalog.clothes.filter((d) => !generatedVersions(char, d.id).length);
   for (const d of missing) {
+    if (!generationAvailability().available) break;
     await generate(char, d.id, false, {
       characterPrompt: state.characterPrompt,
       dressPrompt: promptForSettings(promptSettingsForDress(d.id), state.dressPrompt),
@@ -1889,6 +1967,8 @@ async function refreshServerStatus() {
     status = null;
   }
   if (requestId !== serverStatusRequestId) return;
+  // 同じ確認結果を服フィルタと生成ボタンにも使う（画面遷移ごとの追加リクエストはしない）
+  if (status) setComfyuiStatus(status.mock || status.comfyui ? 'ready' : 'down', { mock: status.mock === true });
   if (!status) {
     el.dataset.state = 'down';
     el.textContent = '状態を取得できません';
