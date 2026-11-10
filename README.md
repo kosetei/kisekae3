@@ -100,7 +100,7 @@ ComfyUIが起動していない、モデルが不足している、またはワ�
 
 1. ComfyUI の `/system_stats` が応答すれば何もしない
 2. PC が応答しない（`SERVER_CHECK_PORT`）ときは Wake on LAN を送り、PC の起動を待つ（`WOL_MAC` が必要）
-3. PC が起動していて ComfyUI が応答しないときは、`ssh <COMFYUI_SSH_USER>@<COMFYUI_URL のホスト> schtasks /Run /TN <COMFYUI_START_TASK>` でタスク スケジューラのタスクを実行する
+3. PC が起動していて ComfyUI が応答しないときは、`ssh <COMFYUI_SSH_USER>@<COMFYUI_URL のホスト> schtasks /Run /TN <COMFYUI_START_TASK>` でタスク スケジューラのタスクを実行する。`COMFYUI_KEEP_AWAKE_TASK` があれば、その直前にスリープ防止タスクも同じ方法で実行する
 4. `/system_stats` が応答するまで待つ
 
 起動処理はサーバー側のジョブとして動き、API はすぐに返ります。進み具合は `GET /api/comfyui/ensure` で確認できます。起動処理中は `/api/server-status` が `starting: true` を返し、画面では「ComfyUI 起動中」と表示されます。服フィルタの「自動」は「生成済みだけ」になり、生成ボタンは無効になります。状態の確認は通常、アクセス時と画面遷移時だけです。ただし、そのタブで起動を始めたときだけは、起動が終わるまで5秒ごとに進み具合を確認します。
@@ -114,11 +114,20 @@ ComfyUIが起動していない、モデルが不足している、またはワ�
 - `COMFYUI_RESUME_GRACE_MS` — WOL で PC が起動したあと、すでに動いている ComfyUI が応答するのを待つ時間（既定値 `15000`）。スリープからの復帰では ComfyUI がそのまま動いていることがあるため、二重起動を避けるために少し待ちます
 - `COMFYUI_START_MIN_INTERVAL_MS` — `schtasks /Run` を送る最低間隔（既定値 `120000` = 2分）。間隔内にもう一度呼ばれたときは、起動コマンドを送らずに応答を待ちます
 - `COMFYUI_VRAM_GUARD_MB` — 設定すると、起動前に `nvidia-smi` で GPU のメモリ使用量を確認し、この値（MB）を超えていれば起動を保留します。画面で確認すると、そのまま起動できます（`{"force": true}`）。未設定なら確認しません
+- `COMFYUI_KEEP_AWAKE_TASK` — スリープ防止タスクの名前（例: `keep_awake`）。英数字と `_ . -` のみ使えます。設定すると、ComfyUI の起動タスクを実行するときにこのタスクも実行します。画面から起動を要求したときは、ComfyUI がすでに動いていても実行します。2分（`COMFYUI_START_MIN_INTERVAL_MS`）に1回までで、失敗しても起動処理は失敗にせず、注意として表示します。未設定なら実行しません
 - `COMFYUI_SSH_BIN` — 使う ssh コマンド（既定値 `ssh`。主にテスト用）
 
 前提と注意:
 
 - **タスクは対話セッションで動かす必要があります。** タスクは「ユーザーがログオンしているときのみ実行する（Interactive only）」で、ComfyUI を使うユーザーとして登録してください。サービス（システム）として実行すると、環境変数（home / cache）の違いでモデルや画像の読み込みに失敗します。そのユーザーがログオンしていないと `/Run` は失敗します。スリープ・休止状態からの復帰ではログオンセッションが残るので動きます（休止状態からの復帰は時間がかかります）。再起動やシャットダウンのあとは、一度ログオンが必要です。
-- **SSH は鍵認証で、パスワードなしで通る必要があります。** `BatchMode=yes`（パスワードを聞かない）と `ConnectTimeout=5` で実行します。kisekae3 を動かすユーザーで `ssh -o BatchMode=yes <user>@<host> "schtasks /Query /TN <task>"` が通ることを確認してください。
-- 起動前に `schtasks /Query /TN <task> /FO CSV /NH` でタスクの状態を確認し、`Running` ならタスクを実行せずに ComfyUI の応答を待ちます。同時に呼ばれた起動要求は1つにまとめます。
+- **SSH は鍵認証で、パスワードなしで通る必要があります。** `BatchMode=yes`（パスワードを聞かない）と `ConnectTimeout=5` で実行します。raspi2 では、kisekae3 を動かすユーザー（`kisekae3.service` の `User=`）から `<COMFYUI_SSH_USER>@<host>` へ鍵認証で通る必要があります。サービスのユーザーが鍵を持っていなければ、そのユーザーの公開鍵を PC 側の `authorized_keys` に追加してください。そのユーザーで `ssh -o BatchMode=yes -o ConnectTimeout=5 <user>@<host> "schtasks /Query /TN <task>"` が通ることを確認してください。
+- **起動タスク（`start_comfy.bat`）は、自分で二重起動を防ぐ必要があります。** ComfyUI が起動しているかは `/system_stats` だけで判断し、タスクの Status（Running）は使いません。`/Run` は待機中にも送る可能性があるので、bat の先頭で `netstat -ano | findstr ":8188" | findstr "LISTENING" >nul && exit /b 0` のように、すでに待ち受けていれば何もせずに終わるようにしてください。アプリ側でも、同時の起動要求は1つにまとめ、`/Run` は最低2分あけて送ります。
+- タスク スケジューラの「タスクが既に実行中の場合に適用される規則」（MultipleInstancesPolicy）は、`start_comfy` も `keep_awake` も「新しいインスタンスを開始しない」をおすすめします。
+- スリープ防止タスクの登録例（管理者権限が必要）。スクリプト側にも単一インスタンスのガードを入れてください。
+
+  ```
+  schtasks /Create /TN keep_awake /TR "powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\tatei\comfy-keep-awake.ps1" /SC ONCE /RU tatei /RL LIMITED /F
+  ```
+
+  `schtasks` ではトリガーなし（On demand）で作れないため、`/SC ONCE` で登録して `/Run` で呼び出します。
 - タスク名・ユーザー・ホストは環境変数の固定値だけを使います。リクエストからは受け取らず、ssh はシェルを通さずに実行します。ただし、このアプリには認証がないため、同じ LAN 上のユーザーなら誰でも起動を要求できます。

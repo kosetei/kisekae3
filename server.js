@@ -1149,7 +1149,7 @@ const server = http.createServer(async (req, res) => {
         || (body.force !== undefined && typeof body.force !== 'boolean')) {
         return json(res, 400, { error: 'body は {"force": boolean} だけ指定できます' });
       }
-      return json(res, 202, startEnsure({ force: body.force === true }));
+      return json(res, 202, startEnsure({ force: body.force === true, explicit: true }));
     }
     if (pathname === '/api/wake' && req.method === 'POST') {
       return json(res, 200, await sendWakeOnLan());

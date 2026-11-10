@@ -2144,7 +2144,8 @@ async function pollEnsureProgress() {
 
 async function finishEnsure(ensure) {
   if (ensure.phase === 'ready' || ensure.phase === 'already_running') {
-    setStatus('ComfyUI が起動しました。もう一度生成ボタンを押してください');
+    const warnings = ensure.warnings?.length ? `（注意: ${ensure.warnings.join(' / ')}）` : '';
+    setStatus(`ComfyUI が起動しました。もう一度生成ボタンを押してください${warnings}`);
     await refreshServerStatus();
     return;
   }
