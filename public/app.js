@@ -1851,10 +1851,12 @@ function renderCurrentView() {
 // ---------------------------------------------------------------------------
 
 let serverStatusRequestId = 0;
+let wakeInFlight = false;
 
 async function refreshServerStatus() {
   const el = document.getElementById('server-status');
   if (!el) return;
+  if (wakeInFlight) return;
   const wakeButton = document.getElementById('wake-button');
   const requestId = ++serverStatusRequestId;
   if (wakeButton) wakeButton.hidden = true;
@@ -1899,6 +1901,9 @@ async function refreshServerStatus() {
 async function wakeServer() {
   const wakeButton = document.getElementById('wake-button');
   const el = document.getElementById('server-status');
+  if (!el) return;
+  wakeInFlight = true;
+  serverStatusRequestId++; // 送信中に届く古い状態レスポンスを破棄する
   wakeButton.disabled = true;
   wakeButton.textContent = '送信中…';
   try {
@@ -1906,6 +1911,7 @@ async function wakeServer() {
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
     wakeButton.hidden = true;
+    el.dataset.state = 'checking';
     el.textContent = '起動信号を送信しました';
     el.title = '起動まで少し待ってから、再読み込みか画面遷移で状態を再確認してください';
   } catch (e) {
@@ -1913,6 +1919,7 @@ async function wakeServer() {
     wakeButton.textContent = '起動';
     alert(`起動信号を送れませんでした: ${e.message}`);
   }
+  wakeInFlight = false;
 }
 
 document.getElementById('wake-button')?.addEventListener('click', wakeServer);
