@@ -8,17 +8,17 @@ const pageNavLinks = [
 ];
 const savedCharacterLayout = localStorage.getItem('kisekae3-character-layout');
 const savedDressFilter = localStorage.getItem('kisekae3-dress-filter');
+// ComfyUI の状態。unknown: まだ確認できていない / ready: 応答あり（mock を含む）/ down: 応答なし
+// starting: 起動待ち（オンデマンド起動 #10 用。今は設定する処理はない）
+const COMFYUI_STATES = ['unknown', 'ready', 'down', 'starting'];
+// 前回の ComfyUI の状態。初回描画で判定を待たずに服フィルタを決めるのに使う
+const COMFYUI_STATUS_CACHE_KEY = 'kisekae3-comfyui-status';
 let characterGridResizeObserver = null;
 let characterGridUpdateFrame = 0;
 // トップのキャラ一覧で 1 ページに表示する数。ランダム表示の「さらに表示」の上限も同じ数
 const CHARACTER_PAGE_SIZE = 30;
 // ランダム表示で最初に出す数と、「さらに表示」1 回で増やす数
 const RANDOM_CHARACTER_STEP = 6;
-// ComfyUI の状態。unknown: まだ確認できていない / ready: 応答あり（mock を含む）/ down: 応答なし
-// starting: 起動待ち（オンデマンド起動 #10 用。今は設定する処理はない）
-const COMFYUI_STATES = ['unknown', 'ready', 'down', 'starting'];
-// 前回の ComfyUI の状態。初回描画で判定を待たずに服フィルタを決めるのに使う
-const COMFYUI_STATUS_CACHE_KEY = 'kisekae3-comfyui-status';
 
 const state = {
   catalog: null,
