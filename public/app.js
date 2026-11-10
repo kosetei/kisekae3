@@ -1846,11 +1846,57 @@ function renderCurrentView() {
   else renderCharacterList();
 }
 
+// ---------------------------------------------------------------------------
+// server status (アクセス時と画面遷移時のみ確認。定期チェックはしない)
+// ---------------------------------------------------------------------------
+
+let serverStatusRequestId = 0;
+
+async function refreshServerStatus() {
+  const el = document.getElementById('server-status');
+  if (!el) return;
+  const requestId = ++serverStatusRequestId;
+  el.dataset.state = 'checking';
+  el.textContent = '確認中…';
+  let status;
+  try {
+    const res = await fetch('/api/server-status', { cache: 'no-store' });
+    status = res.ok ? await res.json() : null;
+  } catch {
+    status = null;
+  }
+  if (requestId !== serverStatusRequestId) return;
+  if (!status) {
+    el.dataset.state = 'down';
+    el.textContent = '状態を取得できません';
+    el.title = 'kisekae3 サーバーに接続できませんでした';
+  } else if (status.mock) {
+    el.dataset.state = 'ok';
+    el.textContent = 'モック生成';
+    el.title = 'GENERATOR=mock で動作中';
+  } else if (status.comfyui) {
+    el.dataset.state = 'ok';
+    el.textContent = 'ComfyUI 稼働中';
+    el.title = `${status.host}: PC 起動中 / ComfyUI 応答あり`;
+  } else if (status.server) {
+    el.dataset.state = 'comfyui-down';
+    el.textContent = 'ComfyUI 停止中';
+    el.title = `${status.host}: PC は起動中ですが ComfyUI が応答しません`;
+  } else {
+    el.dataset.state = 'down';
+    el.textContent = 'PC 停止中';
+    el.title = `${status.host}: PC が応答しません（スリープ中の可能性）`;
+  }
+}
+
+refreshServerStatus();
+
 window.addEventListener('hashchange', async () => {
   if (!await confirmPromptSaveBeforeLeaving()) {
     location.hash = state.routeHash;
     return;
   }
+  refreshServerStatus();
   route();
 });
 
