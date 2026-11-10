@@ -76,6 +76,10 @@ ComfyUIを起動し、ワークフローが参照するモデルとカスタム�
 生成画像は `store/generated/<char>/<dress>__<日時>-<ID>.png` に保存され、以前の画像も残ります。従来の `<dress>.<ext>` 形式の画像も引き続き表示されます。
 
 - `COMFYUI_URL` — ComfyUI URL（既定値 `http://127.0.0.1:8188`）
+- `SERVER_CHECK_PORT` — ComfyUI が動く PC の起動確認に使う TCP ポート（既定値 `3389` = RDP、数値でない場合は既定値に戻ります）。ヘッダーの状態表示で使用し、アクセス時と画面遷移時にのみ確認します
+- `WOL_MAC` — ComfyUI が動く PC の MAC アドレス。設定すると、PC 停止中の表示の横に Wake on LAN の「起動」ボタンが出ます（ブロードキャストはルーターを越えないため、kisekae3 と同じサブネットセグメント上の PC のみに効果あり。`/api/wake` は認証なしで、同じ LAN 上のユーザーなら誰でも送信できます）
+- `WOL_BROADCAST` — マジックパケットの送信先（既定値 `255.255.255.255`）
+- `WOL_PORT` — マジックパケットの送信ポート（既定値 `9`）
 - `COMFYUI_WORKFLOW` — 別のワークフローJSONを使う場合のファイルパス
 - `GENERATOR=mock` — ComfyUIを使わずプレースホルダー画像を生成する開発用モード
 

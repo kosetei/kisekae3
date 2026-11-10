@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { generateImage, getDefaultPrompt, getDefaultSeed } from './lib/generator.js';
+import { checkServerStatus, generateImage, sendWakeOnLan, getDefaultPrompt, getDefaultSeed } from './lib/generator.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(ROOT, 'public');
@@ -1111,6 +1111,12 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname === '/api/config' && req.method === 'GET') {
       return json(res, 200, { prompt: getDefaultPrompt(), seed: getDefaultSeed() });
+    }
+    if (pathname === '/api/server-status' && req.method === 'GET') {
+      return json(res, 200, await checkServerStatus());
+    }
+    if (pathname === '/api/wake' && req.method === 'POST') {
+      return json(res, 200, await sendWakeOnLan());
     }
     if (pathname === '/api/prompt-settings' && req.method === 'GET') {
       return json(res, 200, readPromptSettings());
