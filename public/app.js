@@ -2074,6 +2074,7 @@ async function wakeServer() {
 // ---------------------------------------------------------------------------
 
 const ENSURE_POLL_INTERVAL_MS = 5000;
+const ENSURE_POLL_MAX_FAILURES = 3; // 進み具合を続けてこの回数取得できなかったら確認をやめる
 const ENSURE_PHASE_LABELS = {
   checking: '確認中',
   waking: 'PC を起動中',
@@ -2083,6 +2084,7 @@ const ENSURE_PHASE_LABELS = {
 };
 let lastServerStatus = null;
 let ensurePollTimer = 0;
+let ensurePollFailures = 0;
 
 function showEnsureProgress(ensure) {
   const el = document.getElementById('server-status');
@@ -2144,18 +2146,28 @@ async function pollEnsureProgress() {
   } catch {
     ensure = null;
   }
-  // 一時的に取得できなかったときは次の周期でもう一度確認する
+  // 一時的に取得できなかったときは次の周期でもう一度確認する。続けて失敗したらやめる
   if (!ensure) {
+    ensurePollFailures++;
+    if (ensurePollFailures >= ENSURE_POLL_MAX_FAILURES) {
+      ensurePollFailures = 0;
+      ensurePollTimer = 0;
+      setStatus('ComfyUI の起動状況を確認できなくなりました。しばらくしてから再読み込みしてください');
+      refreshServerStatus();
+      return;
+    }
     ensurePollTimer = setTimeout(pollEnsureProgress, ENSURE_POLL_INTERVAL_MS);
     return;
   }
+  ensurePollFailures = 0;
   handleEnsureProgress(ensure);
 }
 
 async function finishEnsure(ensure) {
   if (ensure.phase === 'ready' || ensure.phase === 'already_running') {
     const warnings = ensure.warnings?.length ? `（注意: ${ensure.warnings.join(' / ')}）` : '';
-    setStatus(`ComfyUI が起動しました。もう一度生成ボタンを押してください${warnings}`);
+    const done = ensure.phase === 'already_running' ? 'ComfyUI はすでに起動しています' : 'ComfyUI が起動しました';
+    setStatus(`${done}。もう一度生成ボタンを押してください${warnings}`);
     await refreshServerStatus();
     return;
   }
