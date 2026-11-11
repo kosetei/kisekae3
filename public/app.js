@@ -2193,6 +2193,7 @@ async function refreshServerStatus() {
   if (wakeButton) wakeButton.hidden = true;
   el.dataset.state = 'checking';
   el.textContent = '確認中…';
+  hideStartEta();
   let status;
   try {
     const res = await fetch('/api/server-status', { cache: 'no-store' });
@@ -2306,6 +2307,60 @@ function showEnsureProgress(ensure) {
   el.dataset.state = 'starting';
   el.textContent = `ComfyUI 起動中…（${ENSURE_PHASE_LABELS[ensure?.phase] || '処理中'}）`;
   el.title = ensure?.message || 'ComfyUI を起動しています';
+  updateStartEta(ensure);
+}
+
+// 起動までの予想（ヘッダー）。サーバーが決め打ちの値から数えた残り秒数を受け取り、次の確認まではこのタブで数える
+let startEtaTimer = 0;
+let startEtaAt = 0;
+
+function startEtaElement() {
+  let el = document.getElementById('comfyui-eta');
+  if (!el) {
+    el = document.createElement('span');
+    el.id = 'comfyui-eta';
+    el.className = 'comfyui-eta';
+    el.hidden = true;
+    el.title = '起動までの予想時間（決め打ちの目安）';
+    document.getElementById('server-status')?.after(el);
+  }
+  return el;
+}
+
+function formatStartEta(sec) {
+  if (sec < 120) return `あと約${Math.max(1, Math.ceil(sec / 5) * 5)}秒`;
+  return `あと約${Math.round(sec / 60)}分`;
+}
+
+function startEtaText() {
+  const remainingSec = Math.round((startEtaAt - Date.now()) / 1000);
+  return remainingSec > 0 ? formatStartEta(remainingSec) : 'まもなく起動します';
+}
+
+function renderStartEta() {
+  const el = startEtaElement();
+  const overdue = startEtaAt <= Date.now();
+  el.innerHTML = `<span aria-hidden="true">⏱</span>${overdue ? '' : '<span class="comfyui-eta-label">起動まで</span>'}${startEtaText()}`;
+}
+
+function updateStartEta(ensure) {
+  clearInterval(startEtaTimer);
+  startEtaTimer = 0;
+  if (!ensure?.inProgress || typeof ensure.estimatedRemainingSec !== 'number') {
+    hideStartEta();
+    return;
+  }
+  startEtaAt = Date.now() + ensure.estimatedRemainingSec * 1000;
+  startEtaElement().hidden = false;
+  renderStartEta();
+  startEtaTimer = setInterval(renderStartEta, 1000);
+}
+
+function hideStartEta() {
+  clearInterval(startEtaTimer);
+  startEtaTimer = 0;
+  const el = document.getElementById('comfyui-eta');
+  if (el) el.hidden = true;
 }
 
 function confirmStartComfyui() {
@@ -2345,7 +2400,8 @@ function handleEnsureProgress(ensure) {
   if (ensure.inProgress) {
     setComfyuiStatus('starting');
     showEnsureProgress(ensure);
-    setStatus(ensure.message || 'ComfyUI を起動しています');
+    const eta = typeof ensure.estimatedRemainingSec === 'number' ? `（${startEtaText()}）` : '';
+    setStatus(`${ensure.message || 'ComfyUI を起動しています'}${eta}`);
     ensurePollTimer = setTimeout(pollEnsureProgress, ENSURE_POLL_INTERVAL_MS);
     return;
   }
@@ -2378,6 +2434,7 @@ async function pollEnsureProgress() {
 }
 
 async function finishEnsure(ensure) {
+  hideStartEta();
   if (ensure.phase === 'ready' || ensure.phase === 'already_running') {
     const warnings = ensure.warnings?.length ? `（注意: ${ensure.warnings.join(' / ')}）` : '';
     const done = ensure.phase === 'already_running' ? 'ComfyUI はすでに起動しています' : 'ComfyUI が起動しました';
