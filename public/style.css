@@ -439,7 +439,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 }
 .dress-filter-bar label { font-size: 13px; font-weight: 600; }
 .dress-filter-count { margin-left: auto; color: var(--muted); font-size: 13px; }
-.dress-filter-hint { margin: 0 0 8px; order: 5; }
+.dress-filter-hint, .dress-filter-auto { margin: 0 0 8px; order: 5; }
+.generation-unavailable { margin: 6px 0 0; color: var(--error); }
 .dresses > .stage-caption { order: 6; }
 .dress-variant-picker {
   min-width: 0;
@@ -596,7 +597,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .stage-image img { max-height: 78svh; }
   .dresses { padding: 0 6px; }
   .dresses h3 { padding: 0 2px; }
-  .dresses .dress-filter-bar, .dresses .dress-filter-hint { padding: 0 2px; }
+  .dresses .dress-filter-bar, .dresses .dress-filter-hint, .dresses .dress-filter-auto { padding: 0 2px; }
   .advanced-settings { margin: 12px 8px; }
 }
 
@@ -628,7 +629,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   /* 横向きのサイドバーでは表示条件欄を上部に残す */
   .dresses h3 { order: 1; }
   .dresses > .dress-filter-bar { order: 2; }
-  .dresses > .dress-filter-hint { order: 3; }
+  .dresses > .dress-filter-hint, .dresses > .dress-filter-auto { order: 3; }
   .dress-folder-picker { order: 4; }
   .dress-grid { order: 5; }
   .dresses > .stage-caption { order: 6; }
