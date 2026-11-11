@@ -5,7 +5,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { checkComfyuiHttp, checkServerStatus, comfyuiTarget, generateImage, isMockGenerator, sendWakeOnLan, getDefaultPrompt, getDefaultSeed } from './lib/generator.js';
-import { ensureAndWait, ensureStatus, extendKeepAwake, isEnsureInProgress, launcherConfig, startEnsure } from './lib/comfyui-launcher.js';
+import { ensureAndWait, ensureStatus, isEnsureInProgress, launcherConfig, startEnsure } from './lib/comfyui-launcher.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(ROOT, 'public');
@@ -1134,7 +1134,6 @@ const server = http.createServer(async (req, res) => {
         // ComfyUI のオンデマンド起動（COMFYUI_START_TASK）が使えるか、起動処理中か
         startAvailable: ensure.enabled,
         autoStart: ensure.autoStart,
-        keepAwakeAvailable: ensure.keepAwakeAvailable,
         starting: ensure.inProgress,
         ensure,
       });
@@ -1151,10 +1150,6 @@ const server = http.createServer(async (req, res) => {
         return json(res, 400, { error: 'body は {"force": boolean} だけ指定できます' });
       }
       return json(res, 202, startEnsure({ force: body.force === true, explicit: true }));
-    }
-    if (pathname === '/api/comfyui/keep-awake' && req.method === 'POST') {
-      // 「スリープ延長」。リクエストからは何も受け取らず、COMFYUI_KEEP_AWAKE_TASK だけを実行する（start_comfy は送らない）
-      return json(res, 200, await extendKeepAwake());
     }
     if (pathname === '/api/wake' && req.method === 'POST') {
       return json(res, 200, await sendWakeOnLan());

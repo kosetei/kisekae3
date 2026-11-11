@@ -2217,14 +2217,6 @@ async function refreshServerStatus() {
     wakeButton.hidden = false;
     wakeButton.disabled = false;
     wakeButton.textContent = 'ComfyUI を起動';
-    wakeButton.title = '';
-  }
-  // 稼働中は「スリープ延長」（COMFYUI_KEEP_AWAKE_TASK があるときだけ。keep_awake だけを実行し、ComfyUI は起動し直さない）
-  if (wakeButton && canExtendSleep(status)) {
-    wakeButton.hidden = false;
-    wakeButton.disabled = false;
-    wakeButton.textContent = 'スリープ延長';
-    wakeButton.title = 'PC のスリープ防止タスクをもう一度実行します（2分に1回まで）';
   }
   if (!status) {
     markComfyuiStatusUnconfirmed();
@@ -2395,47 +2387,8 @@ async function finishEnsure(ensure) {
   alert(ensure.message || 'ComfyUI を起動できませんでした');
 }
 
-function canExtendSleep(status) {
-  return Boolean(status && !status.mock && status.comfyui && !status.starting && status.keepAwakeAvailable);
-}
-
-async function extendSleep() {
-  const wakeButton = document.getElementById('wake-button');
-  if (!wakeButton) return;
-  wakeButton.disabled = true;
-  wakeButton.textContent = '送信中…';
-  let label = 'スリープ延長';
-  try {
-    const res = await fetch('/api/comfyui/keep-awake', { method: 'POST' });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-    setStatus(body.result === 'throttled' ? `スリープ延長は2分に1回までです。${body.message}` : body.message);
-    wakeButton.title = body.message;
-    if (body.result === 'sent') label = '延長しました';
-    else if (body.result === 'throttled') label = `あと${Math.ceil((body.retryAfterMs || 0) / 1000)}秒`;
-    else if (body.result === 'disabled') {
-      wakeButton.hidden = true;
-      return;
-    } else {
-      label = '延長できませんでした';
-      alert(body.message || 'スリープを延長できませんでした');
-    }
-  } catch (e) {
-    label = '延長できませんでした';
-    alert(`スリープを延長できませんでした: ${e.message}`);
-  }
-  // 結果をボタンに少しだけ出してから元に戻す（状態の再確認はしない）
-  wakeButton.textContent = label;
-  setTimeout(() => {
-    if (wakeButton.textContent !== label) return;
-    wakeButton.disabled = false;
-    wakeButton.textContent = 'スリープ延長';
-  }, 3000);
-}
-
 document.getElementById('wake-button')?.addEventListener('click', () => {
-  if (canExtendSleep(lastServerStatus)) extendSleep();
-  else if (lastServerStatus?.startAvailable) startComfyui();
+  if (lastServerStatus?.startAvailable) startComfyui();
   else wakeServer();
 });
 
