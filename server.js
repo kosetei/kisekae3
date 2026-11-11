@@ -5,6 +5,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { checkComfyuiHttp, checkServerStatus, comfyuiTarget, generateImage, isMockGenerator, sendWakeOnLan, getDefaultPrompt, getDefaultSeed } from './lib/generator.js';
+import { estimateSleep, noteGenerationFinished } from './lib/sleep-estimate.js';
 import { ensureAndWait, ensureStatus, extendKeepAwake, isEnsureInProgress, launcherConfig, startEnsure } from './lib/comfyui-launcher.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -739,6 +740,7 @@ async function handleGenerate(res, body) {
     force,
     disableLora,
   });
+  noteGenerationFinished();
 
   const generatedMetadata = readGeneratedMetadata();
   generatedMetadata[character] ??= {};
@@ -1129,8 +1131,15 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname === '/api/server-status' && req.method === 'GET') {
       const ensure = ensureStatus();
+      const serverStatus = await checkServerStatus();
+      // スリープまでの推定（ComfyUI が応答しているときだけ。この確認のときだけ ComfyUI の /queue と /history を見る）
+      const sleepEstimate = await estimateSleep(comfyuiTarget().base, {
+        ...serverStatus,
+        readyAt: ensure.phase === 'ready' && ensure.finishedAt ? Date.parse(ensure.finishedAt) : 0,
+      });
       return json(res, 200, {
-        ...await checkServerStatus(),
+        ...serverStatus,
+        sleepEstimate,
         // ComfyUI のオンデマンド起動（COMFYUI_START_TASK）が使えるか、起動処理中か
         startAvailable: ensure.enabled,
         autoStart: ensure.autoStart,

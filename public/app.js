@@ -2202,6 +2202,7 @@ async function refreshServerStatus() {
   }
   if (requestId !== serverStatusRequestId) return;
   lastServerStatus = status;
+  updateSleepEstimate(status);
   // 同じ確認結果を服フィルタと生成ボタンにも使う（画面遷移ごとの追加リクエストはしない）
   if (status) {
     setComfyuiStatus(status.mock || status.comfyui ? 'ready' : status.starting ? 'starting' : 'down', {
@@ -2431,6 +2432,75 @@ async function extendSleep() {
     wakeButton.disabled = false;
     wakeButton.textContent = 'スリープ延長';
   }, 3000);
+}
+
+// ---------------------------------------------------------------------------
+// スリープまでの推定（ヘッダー）。サーバーが状態確認のときに返した推定時刻まで、表示だけをこのタブで数える。
+// 表示の更新はタイマーで文字を書き換えるだけで、サーバーには問い合わせない
+// ---------------------------------------------------------------------------
+
+const SLEEP_ESTIMATE_BASIS_LABELS = {
+  comfyui_history: 'ComfyUI の最後の実行',
+  generation: 'このアプリの最後の生成',
+  start: 'ComfyUI の起動',
+};
+let sleepEstimateTimer = 0;
+let sleepEstimateAt = 0;
+
+function sleepEstimateElement() {
+  let el = document.getElementById('sleep-estimate');
+  if (!el) {
+    el = document.createElement('span');
+    el.id = 'sleep-estimate';
+    el.className = 'sleep-estimate';
+    el.hidden = true;
+    document.getElementById('server-status')?.after(el);
+  }
+  return el;
+}
+
+function formatSleepRemaining(sec) {
+  const minutes = Math.max(1, Math.round(sec / 60));
+  if (minutes < 60) return `約${minutes}分`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `約${hours}時間${rest}分` : `約${hours}時間`;
+}
+
+function renderSleepEstimate() {
+  const el = sleepEstimateElement();
+  const remainingSec = Math.round((sleepEstimateAt - Date.now()) / 1000);
+  el.innerHTML = remainingSec > 0
+    ? `<span aria-hidden="true">💤</span><span class="sleep-estimate-label">スリープまで</span>${formatSleepRemaining(remainingSec)}`
+    : '<span aria-hidden="true">💤</span>まもなくスリープ';
+  if (remainingSec <= 0) {
+    clearInterval(sleepEstimateTimer);
+    sleepEstimateTimer = 0;
+  }
+}
+
+function updateSleepEstimate(status) {
+  clearInterval(sleepEstimateTimer);
+  sleepEstimateTimer = 0;
+  const el = sleepEstimateElement();
+  const estimate = status?.sleepEstimate;
+  if (!estimate || (!estimate.busy && !estimate.sleepAt)) {
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  if (estimate.busy) {
+    el.innerHTML = '<span aria-hidden="true">💤</span>生成中はスリープしません';
+    el.title = 'ComfyUI が生成中なので、スリープ防止タスクが動いていればスリープしません（推定）';
+    return;
+  }
+  // サーバーとの時計のずれを避けるため、残り秒数から自分の時計の時刻に直す
+  sleepEstimateAt = Date.now() + estimate.remainingSec * 1000;
+  const basis = SLEEP_ESTIMATE_BASIS_LABELS[estimate.basis] || '最後の活動';
+  const lastActivity = new Date(estimate.lastActivityAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+  el.title = `推定: ${basis}（${lastActivity}）から数えた目安です。PC を直接操作していればもっと遅くなります`;
+  renderSleepEstimate();
+  if (sleepEstimateAt > Date.now()) sleepEstimateTimer = setInterval(renderSleepEstimate, 30000);
 }
 
 document.getElementById('wake-button')?.addEventListener('click', () => {

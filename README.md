@@ -80,6 +80,10 @@ ComfyUIを起動し、ワークフローが参照するモデルとカスタム�
 - `WOL_MAC` — ComfyUI が動く PC の MAC アドレス。設定すると、PC 停止中の表示の横に Wake on LAN の「起動」ボタンが出ます（ブロードキャストはルーターを越えないため、kisekae3 と同じサブネットセグメント上の PC のみに効果あり。`/api/wake` は認証なしで、同じ LAN 上のユーザーなら誰でも送信できます）
 - `WOL_BROADCAST` — マジックパケットの送信先（既定値 `255.255.255.255`）
 - `WOL_PORT` — マジックパケットの送信ポート（既定値 `9`）
+- `PC_SLEEP_IDLE_MINUTES` — PC がアイドルでスリープするまでの分数（既定値 `60`。Windows の AC のスリープ設定に合わせる）。`0` にすると、ヘッダーのスリープまでの推定を出しません
+- `KEEP_AWAKE_WINDOW_MINUTES` — スリープ防止スクリプト（`comfy-keep-awake.ps1`）が、最後の活動のあとスリープを止めておく分数（既定値 `5`）
+
+ComfyUI が応答しているときは、ヘッダーに「💤 スリープまで約N分」と推定を表示します（スマホ幅では「💤約N分」）。推定は「最後の活動 + `KEEP_AWAKE_WINDOW_MINUTES` + `PC_SLEEP_IDLE_MINUTES`」です。最後の活動には、ComfyUI の `/history` の最新の実行、このアプリで最後に生成した時刻、アプリから ComfyUI を起動・復帰させた時刻のうち、一番新しいものを使います。ComfyUI が生成中なら「生成中はスリープしません」と出します。ComfyUI への問い合わせ（`/queue` と `/history?max_items=1`）は状態確認（アクセス時と画面遷移時）のときだけで、表示はタブ内のタイマーで数え直すだけです。PC を直接操作した分はわからないので目安です。kisekae3 を再起動した直後で ComfyUI の履歴もないときは表示しません。
 - `COMFYUI_WORKFLOW` — 別のワークフローJSONを使う場合のファイルパス
 - `GENERATOR=mock` — ComfyUIを使わずプレースホルダー画像を生成する開発用モード
 
