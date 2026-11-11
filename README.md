@@ -96,6 +96,8 @@ ComfyUIが起動していない、モデルが不足している、またはワ�
 
 `COMFYUI_START_TASK` を設定すると、ComfyUI が止まっているときにアプリから起動できます。ヘッダーに「ComfyUI を起動」ボタンが出るほか、停止中に生成ボタンを押すと「ComfyUI を起動しますか？」と確認します。起動が終わっても生成は自動では始まらないので、もう一度生成ボタンを押してください。
 
+ComfyUI の稼働中で `COMFYUI_KEEP_AWAKE_TASK` も設定されているときは、ヘッダーに「スリープ延長」ボタンが出ます。押すとスリープ防止タスクだけを実行し（`POST /api/comfyui/keep-awake`）、ComfyUI の起動タスクは送りません。起動時と同じく2分（`COMFYUI_START_MIN_INTERVAL_MS`）に1回までで、間隔内に押したときは「あと N 秒」と表示して何も送りません。結果はボタンに数秒表示します。
+
 起動は `POST /api/comfyui/ensure` で、次の順に進みます。
 
 1. ComfyUI の `/system_stats` が応答すれば何もしない
