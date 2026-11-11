@@ -2434,6 +2434,12 @@ async function extendSleep() {
   }, 3000);
 }
 
+document.getElementById('wake-button')?.addEventListener('click', () => {
+  if (canExtendSleep(lastServerStatus)) extendSleep();
+  else if (lastServerStatus?.startAvailable) startComfyui();
+  else wakeServer();
+});
+
 // ---------------------------------------------------------------------------
 // スリープまでの推定（ヘッダー）。サーバーが状態確認のときに返した推定時刻まで、表示だけをこのタブで数える。
 // 表示の更新はタイマーで文字を書き換えるだけで、サーバーには問い合わせない
@@ -2506,12 +2512,6 @@ function updateSleepEstimate(status) {
   renderSleepEstimate();
   if (sleepEstimateAt > Date.now()) sleepEstimateTimer = setInterval(renderSleepEstimate, 30000);
 }
-
-document.getElementById('wake-button')?.addEventListener('click', () => {
-  if (canExtendSleep(lastServerStatus)) extendSleep();
-  else if (lastServerStatus?.startAvailable) startComfyui();
-  else wakeServer();
-});
 
 refreshServerStatus();
 
