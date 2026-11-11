@@ -95,11 +95,7 @@ applyTheme(document.documentElement.dataset.theme, false);
 // ---------------------------------------------------------------------------
 
 const WAKE_BUTTON_ICONS = [
-  [/スリープ/, '☕'],
   [/送信中|起動中/, '⏳'],
-  [/延長しました/, '✅'],
-  [/できません/, '⚠️'],
-  [/あと/, '⏱'],
 ];
 
 function syncCompactHeader() {
