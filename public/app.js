@@ -80,12 +80,51 @@ function applyTheme(theme, persist = true) {
   document.documentElement.dataset.theme = theme;
   if (persist) localStorage.setItem('kisekae3-theme', theme);
   const isDark = theme === 'dark';
-  themeToggle.textContent = isDark ? '☀️ ライトモード' : '🌙 ダークモード';
+  // スマホ幅ではアイコンだけを表示する（ラベルは CSS で隠し、aria-label で読み上げる）
+  themeToggle.innerHTML = `<span aria-hidden="true">${isDark ? '☀️' : '🌙'}</span> <span class="header-button-label">${isDark ? 'ライトモード' : 'ダークモード'}</span>`;
   themeToggle.setAttribute('aria-label', `${isDark ? 'ライト' : 'ダーク'}モードに切り替え`);
   themeToggle.setAttribute('aria-pressed', String(isDark));
 }
 
 applyTheme(document.documentElement.dataset.theme, false);
+
+// ---------------------------------------------------------------------------
+// スマホ幅のヘッダー: 状態は色の点だけ、ボタンはアイコンだけにする（CSS の @media）。
+// 状態の文言は title / aria-label に写し、点をタップすると文言を出し入れできる。
+// 起動ボタンの文言はあちこちで書き換わるので、文言からアイコンを決める
+// ---------------------------------------------------------------------------
+
+const WAKE_BUTTON_ICONS = [
+  [/送信中|起動中/, '⏳'],
+];
+
+function syncCompactHeader() {
+  const status = document.getElementById('server-status');
+  if (status) status.setAttribute('aria-label', `${status.textContent}${status.title ? `（${status.title}）` : ''}`);
+  const wake = document.getElementById('wake-button');
+  if (wake) {
+    const label = wake.textContent.trim();
+    wake.dataset.icon = WAKE_BUTTON_ICONS.find(([pattern]) => pattern.test(label))?.[1] || '⏻';
+    wake.setAttribute('aria-label', label);
+  }
+}
+
+{
+  const status = document.getElementById('server-status');
+  const wake = document.getElementById('wake-button');
+  const observer = new MutationObserver(syncCompactHeader);
+  if (status) observer.observe(status, { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ['title'] });
+  if (wake) observer.observe(wake, { childList: true, characterData: true, subtree: true });
+  syncCompactHeader();
+  const toggleStatusText = () => status.classList.toggle('is-expanded');
+  status?.addEventListener('click', toggleStatusText);
+  status?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      toggleStatusText();
+    }
+  });
+}
 themeToggle.addEventListener('click', () => {
   applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
 });

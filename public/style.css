@@ -656,3 +656,17 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 @media (prefers-reduced-motion: reduce) {
   .stage-image img.stage-image-overlay { transition-duration: 0.01ms; }
 }
+
+/* スマホ幅のヘッダー: 1 行に収める。状態は色の点、ボタンはアイコンだけ（文言は読み上げ・タップで確認） */
+@media (max-width: 640px) {
+  header { padding: 8px 12px; gap: 8px; flex-wrap: nowrap; }
+  header h1 { font-size: 16px; margin-right: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  header .hint { display: none; }
+  .server-status { font-size: 0; gap: 0; padding: 8px 4px; cursor: pointer; }
+  .server-status::before { width: 12px; height: 12px; }
+  .server-status.is-expanded { font-size: 12px; gap: 6px; white-space: normal; }
+  .wake-button { font-size: 0; padding: 4px 8px; line-height: 1; }
+  .wake-button::before { content: attr(data-icon); font-size: 16px; }
+  .theme-toggle { padding: 4px 8px; line-height: 1; font-size: 16px; }
+  .header-button-label { display: none; }
+}
