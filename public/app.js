@@ -161,9 +161,18 @@ function setComfyuiStatus(nextState, { mock = false } = {}) {
       // 保存できなくても今回の表示には影響しない
     }
   }
-  // 判定が終わったら着せ替え画面だけ描き直す（表示が変わらないときは描き直さない）
+  // 判定が終わったら着せ替え画面だけ描き直す（表示が変わらないときと、生成中は描き直さない。
+  // 生成中は理由の表示が一瞬古いままになるが、generate() 側でも状態を確かめる）
   const changed = previous.state !== nextState || previous.mock !== mock || !previous.checked;
   if (changed && state.catalog && state.currentCharacter && !state.busy) renderCharacterView();
+}
+
+// 状態の取得自体に失敗したとき。前回の判定を「確定」のまま使わず、「（前回の状態）」表示に戻す
+function markComfyuiStatusUnconfirmed() {
+  const previous = state.comfyui;
+  if (!previous.checked) return;
+  state.comfyui = { ...previous, checked: false };
+  if (state.catalog && state.currentCharacter && !state.busy) renderCharacterView();
 }
 
 function comfyuiStatusLabel(comfyui = state.comfyui) {
@@ -1970,6 +1979,7 @@ async function refreshServerStatus() {
   // 同じ確認結果を服フィルタと生成ボタンにも使う（画面遷移ごとの追加リクエストはしない）
   if (status) setComfyuiStatus(status.mock || status.comfyui ? 'ready' : 'down', { mock: status.mock === true });
   if (!status) {
+    markComfyuiStatusUnconfirmed();
     el.dataset.state = 'down';
     el.textContent = '状態を取得できません';
     el.title = 'kisekae3 サーバーに接続できませんでした';
