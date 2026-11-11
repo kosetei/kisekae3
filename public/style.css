@@ -129,7 +129,7 @@ a { color: var(--link); }
   object-fit: cover;
 }
 .character-grid.is-contain .character-card img { object-fit: contain; }
-.character-list-toolbar, .character-pagination {
+.character-list-toolbar {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -137,13 +137,12 @@ a { color: var(--link); }
   margin: 12px 0;
 }
 .character-list-toolbar label { font-size: 13px; font-weight: 600; }
-.character-list-count, .character-pagination span { color: var(--muted); font-size: 13px; }
-.character-list-count { margin-left: auto; }
-.character-pagination { justify-content: center; }
-.character-pagination-bottom { margin-top: 18px; }
-.random-more { display: flex; justify-content: center; margin-top: 18px; }
-.random-more button { padding: 6px 16px; }
-.character-pagination button { padding: 6px 12px; }
+.character-list-count { color: var(--muted); font-size: 13px; margin-left: auto; }
+.character-load-more { position: relative; display: flex; justify-content: center; margin-top: 18px; }
+.character-load-more[hidden] { display: none; }
+.character-load-sentinel { position: absolute; top: 0; left: 0; width: 1px; height: 1px; pointer-events: none; }
+.character-load-more button { padding: 6px 16px; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -203,7 +202,6 @@ button.card { cursor: pointer; font: inherit; text-align: left; }
 .upload-form .hint, .upload-status { margin: 0; font-size: 12px; }
 .upload-status { color: var(--status); white-space: pre-line; }
 .upload-section { margin: 14px 0; padding: 10px 12px; }
-.upload-section summary { cursor: pointer; }
 .catalog-page { max-width: 1400px; }
 .page-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; font-size: 14px; }
 .page-nav a {
