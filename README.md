@@ -77,7 +77,7 @@ ComfyUIを起動し、ワークフローが参照するモデルとカスタム�
 
 - `COMFYUI_URL` — ComfyUI URL（既定値 `http://127.0.0.1:8188`）
 - `SERVER_CHECK_PORT` — ComfyUI が動く PC の起動確認に使う TCP ポート（既定値 `3389` = RDP、数値でない場合は既定値に戻ります）。ヘッダーの状態表示で使用し、アクセス時と画面遷移時にのみ確認します
-- `WOL_MAC` — ComfyUI が動く PC の MAC アドレス。設定すると、PC 停止中の表示の横に Wake on LAN の「起動」ボタンが出ます（ブロードキャストはルーターを越えないため、kisekae3 と同じサブネットセグメント上の PC のみに効果あり。`/api/wake` は認証なしで、同じ LAN 上のユーザーなら誰でも送信できます）
+- `WOL_MAC` — ComfyUI が動く PC の MAC アドレス。設定すると、PC 停止中の表示の横に Wake on LAN の「起動」ボタンが出ます（ブロードキャストはルーターを越えないため、kisekae3 と同じサブネットセグメント上の PC のみに効果あり。`/api/wake` は認証なしで、同じ LAN 上のユーザーなら誰でも送信できます）。MAC は PC の有線 NIC（`powercfg /devicequery wake_armed` に出るもの。例: Realtek PCIe GbE）のものを指定してください。VPN・Wi-Fi などの仮想アダプタ（`00-FF-...` など）の MAC では起きません。BIOS / UEFI 側の Wake on LAN も有効にしておく必要があります
 - `WOL_BROADCAST` — マジックパケットの送信先（既定値 `255.255.255.255`）
 - `WOL_PORT` — マジックパケットの送信ポート（既定値 `9`）
 - `COMFYUI_WORKFLOW` — 別のワークフローJSONを使う場合のファイルパス
@@ -105,7 +105,7 @@ ComfyUI の稼働中で `COMFYUI_KEEP_AWAKE_TASK` も設定されているとき
 3. PC が起動していて ComfyUI が応答しないときは、`ssh <COMFYUI_SSH_USER>@<COMFYUI_URL のホスト> schtasks /Run /TN <COMFYUI_START_TASK>` でタスク スケジューラのタスクを実行する。`COMFYUI_KEEP_AWAKE_TASK` があれば、その直前にスリープ防止タスクも同じ方法で実行する（`/Run` を最低間隔のために送らないときも、スリープ防止タスクは専用の最低間隔で実行する）
 4. `/system_stats` が応答するまで待つ
 
-起動処理はサーバー側のジョブとして動き、API はすぐに返ります。進み具合は `GET /api/comfyui/ensure` で確認できます。起動処理中は `/api/server-status` が `starting: true` を返し、画面では「ComfyUI 起動中」と表示されます。服フィルタの「自動」は「生成済みだけ」になり、生成ボタンは無効になります。状態の確認は通常、アクセス時と画面遷移時だけです。ただし、そのタブで起動を始めたときだけは、起動が終わるまで5秒ごとに進み具合を確認します（3回続けて取得できなければ確認をやめます）。起動中はヘッダーに「⏱ 起動まであと約N秒」（スマホ幅では「⏱あと約N秒」）と予想を表示します。予想はサーバー側でフェーズごと（WOL を送ったとき = 起動 + ComfyUI、`/Run` を送ったとき = ComfyUI）に決め打ちの値から計算し、進み具合と一緒に返す残り秒数を、次の確認まではタブ内で1秒ごとに数えます。予想を過ぎても終わっていなければ「まもなく起動します」と表示します。
+起動処理はサーバー側のジョブとして動き、API はすぐに返ります。進み具合は `GET /api/comfyui/ensure` で確認できます。起動処理中は `/api/server-status` が `starting: true` を返し、画面では「ComfyUI 起動中」と表示されます。服フィルタの「自動」は「生成済みだけ」になり、生成ボタンは無効になります。状態の確認は通常、アクセス時と画面遷移時だけです。ただし、そのタブで起動を始めたときだけは、起動が終わるまで5秒ごとに進み具合を確認します（3回続けて取得できなければ確認をやめます）。起動中はヘッダーに「⏱ 起動まであと約N秒」（スマホ幅では「⏱あと約N秒」）と予想を表示します。予想はサーバー側で、フェーズが変わるたびに決め打ちの値から計算し直します。WOL を送ったときは PC の起動分（`COMFYUI_ESTIMATE_WAKE_SEC`）だけです。PC が起きたあとは、ComfyUI がそのまま動いているかの確認（`COMFYUI_RESUME_GRACE_MS`）分を見ます。スリープ（S3）からならプロセスが残っているので、ここで終わります。休止（S4）からなどで実際に `/Run` を送ったときに、そこから ComfyUI の起動分（`COMFYUI_ESTIMATE_START_SEC`）を見積もります。計算した残り秒数は、進み具合と一緒に返す残り秒数を、次の確認まではタブ内で1秒ごとに数えます。予想を過ぎても終わっていなければ「まもなく起動します」と表示します。
 
 - `COMFYUI_START_TASK` — 実行するタスク名（例: `start_comfy`）。未設定なら起動機能は無効です。英数字と `_ . -` のみ使えます
 - `COMFYUI_SSH_USER` — PC へ SSH で接続するユーザー（例: `tatei`）。英数字と `_ . -` のみ使えます。接続先は常に `COMFYUI_URL` のホストです
@@ -114,7 +114,7 @@ ComfyUI の稼働中で `COMFYUI_KEEP_AWAKE_TASK` も設定されているとき
 - `COMFYUI_START_TIMEOUT_MS` — タスク実行後に ComfyUI の応答を待つ時間（既定値 `180000` = 180秒。モデルの読み込み時間を見込んでいます）
 - `COMFYUI_POLL_INTERVAL_MS` — 待機中に確認する間隔（既定値 `5000`）
 - `COMFYUI_RESUME_GRACE_MS` — WOL で PC が起動したあと、すでに動いている ComfyUI が応答するのを待つ時間（既定値 `15000`）。スリープからの復帰では ComfyUI がそのまま動いていることがあるため、二重起動を避けるために少し待ちます
-- `COMFYUI_ESTIMATE_WAKE_SEC` / `COMFYUI_ESTIMATE_START_SEC` — 起動までの予想時間の表示に使う決め打ちの値（既定値 `60` / `75` 秒。ComfyUI は `/Run` から `/system_stats` 応答まで実測71秒）。WOL から PC が起きるまでと、起動タスクから ComfyUI が応答するまでの秒数です。待ち時間の上限（`*_TIMEOUT_MS`）とは別で、表示にだけ使います
+- `COMFYUI_ESTIMATE_WAKE_SEC` / `COMFYUI_ESTIMATE_START_SEC` — 起動までの予想時間の表示に使う決め打ちの値（既定値 `60` / `75` 秒）。`COMFYUI_ESTIMATE_WAKE_SEC` は WOL から PC が起きるまで（未計測の仮の値）、`COMFYUI_ESTIMATE_START_SEC` は起動タスクから ComfyUI が応答するまで（実測 71 秒）です。待ち時間の上限（`*_TIMEOUT_MS`）とは別で、表示にだけ使います
 - `COMFYUI_START_MIN_INTERVAL_MS` — `schtasks /Run` を送る最低間隔（既定値 `120000` = 2分）。送ろうとした時刻から数えるので、ssh が失敗した場合も間隔をあけます。間隔内にもう一度呼ばれたときは、起動コマンド（と VRAM の確認）を送らずに応答を待ちます
 - `COMFYUI_VRAM_GUARD_MB` — 設定すると、起動前に `nvidia-smi` で GPU のメモリ使用量を確認し、この値（MB）を超えていれば起動を保留します。画面で確認すると、そのまま起動できます（`{"force": true}`）。確認結果は `COMFYUI_START_MIN_INTERVAL_MS` の間は使い回します。未設定なら確認しません
 - `COMFYUI_KEEP_AWAKE_TASK` — スリープ防止タスクの名前（例: `keep_awake`）。英数字と `_ . -` のみ使えます。設定すると、ComfyUI の起動タスクを実行するときにこのタスクも実行します。画面から起動を要求したときは、ComfyUI がすでに動いていても実行します。2分（`COMFYUI_START_MIN_INTERVAL_MS`）に1回までで、失敗しても起動処理は失敗にせず、注意として表示します。未設定なら実行しません
