@@ -319,10 +319,11 @@ function sortedCharacterListItems() {
   return items;
 }
 
-function characterCardHtml(c) {
+// eager: 詳細から戻ったとき、戻り先より上のカードは先に読み込んで高さを確定させる
+function characterCardHtml(c, { eager = false } = {}) {
   return `
     <a class="card character-card" href="#/char/${esc(c.id)}" data-character-id="${esc(c.id)}" aria-label="${esc(c.name)}">
-      ${c.iconUrl ? `<img src="${c.iconUrl}" alt="" loading="lazy" />` : '<div class="noimg">No icon</div>'}
+      ${c.iconUrl ? `<img src="${esc(c.iconUrl)}" alt="" loading="${eager ? 'eager' : 'lazy'}" />` : '<div class="noimg">No icon</div>'}
       <div class="meta">
         <span class="count">${generatedCount(c)} / ${state.catalog.clothes.length} 生成済み</span>
       </div>
@@ -346,7 +347,7 @@ function teardownCharacterList() {
   characterGridUpdateFrame = 0;
   characterMasonry = null;
   characterListView = null;
-  characterScrollAnchor = null;
+  stopCharacterScrollAnchor();
 }
 
 // Pinterest風レイアウト。追記時は追加したカードだけ測り、グリッド幅が変わったときだけ全カードを測り直す
@@ -387,10 +388,17 @@ function setupCharacterMasonry(grid) {
   const addCards = (cards) => {
     cards.forEach((card) => {
       pending.add(card);
-      card.querySelector('img')?.addEventListener('load', () => {
+      const image = card.querySelector('img');
+      if (!image) return;
+      // 読み込みに失敗した画像も仮の 3:4 のまま残さず測り直す
+      const remeasure = () => {
+        image.removeEventListener('load', remeasure);
+        image.removeEventListener('error', remeasure);
         pending.add(card);
         schedule();
-      }, { once: true });
+      };
+      image.addEventListener('load', remeasure);
+      image.addEventListener('error', remeasure);
     });
     schedule();
   };
@@ -413,31 +421,48 @@ function keepCharacterScrollAnchor() {
   const anchor = characterScrollAnchor;
   if (!anchor) return;
   if (performance.now() > anchor.until) {
-    characterScrollAnchor = null;
+    stopCharacterScrollAnchor();
     return;
   }
   anchor.card.isConnected && anchor.card.scrollIntoView({ block: 'center' });
 }
 
+const CHARACTER_ANCHOR_STOP_EVENTS = ['wheel', 'touchstart', 'keydown', 'pointerdown'];
+
+// 今のアンカーを外し、ユーザー操作の監視もやめる（古いアンカーのリスナーが新しいアンカーを消さないように）
+function stopCharacterScrollAnchor() {
+  const anchor = characterScrollAnchor;
+  if (!anchor) return;
+  characterScrollAnchor = null;
+  CHARACTER_ANCHOR_STOP_EVENTS.forEach((type) => window.removeEventListener(type, anchor.stop, true));
+}
+
 function startCharacterScrollAnchor(card) {
-  const stop = () => {
-    characterScrollAnchor = null;
-    ['wheel', 'touchstart', 'keydown', 'pointerdown'].forEach((type) => window.removeEventListener(type, stop, true));
+  stopCharacterScrollAnchor();
+  const anchor = { card, until: performance.now() + 2000 };
+  anchor.stop = () => {
+    if (characterScrollAnchor === anchor) stopCharacterScrollAnchor();
   };
-  characterScrollAnchor = { card, until: performance.now() + 2000 };
-  ['wheel', 'touchstart', 'keydown', 'pointerdown'].forEach((type) => window.addEventListener(type, stop, { capture: true, once: true }));
+  characterScrollAnchor = anchor;
+  CHARACTER_ANCHOR_STOP_EVENTS.forEach((type) => window.addEventListener(type, anchor.stop, true));
   requestAnimationFrame(() => requestAnimationFrame(() => {
     if (card.isConnected) card.scrollIntoView({ block: 'center' });
   }));
 }
 
-function updateCharacterLoadMore() {
+function updateCharacterLoadMore({ announce = false } = {}) {
   const view = characterListView;
   if (!view) return;
   const loaded = Math.min(state.characterLoadedCount, view.items.length);
   const done = loaded >= view.items.length;
   view.loadMore.hidden = done;
   view.button.textContent = `さらに表示（${loaded} / ${view.items.length}）`;
+  // スクリーンリーダー向けに、追記したときだけ件数を読み上げさせる
+  if (announce) {
+    view.status.textContent = done
+      ? `全件読み込みました（${view.items.length}件）`
+      : `${loaded}件まで読み込みました（全${view.items.length}件）`;
+  }
 }
 
 // 一番下に来たら次の 1 batch を追記する（全体は描き直さない）
@@ -447,11 +472,11 @@ function loadMoreCharacters({ focus = false } = {}) {
   const start = Math.min(state.characterLoadedCount, view.items.length);
   const next = view.items.slice(start, start + CHARACTER_PAGE_SIZE);
   if (!next.length) return;
-  view.grid.insertAdjacentHTML('beforeend', next.map(characterCardHtml).join(''));
+  view.grid.insertAdjacentHTML('beforeend', next.map((c) => characterCardHtml(c)).join(''));
   state.characterLoadedCount = start + next.length;
   const newCards = [...view.grid.querySelectorAll('.character-card')].slice(start);
   characterMasonry?.addCards(newCards);
-  updateCharacterLoadMore();
+  updateCharacterLoadMore({ announce: true });
   persistCharacterListState();
   if (focus) newCards[0]?.focus();
   // 追記したカードのレイアウトが済んでから、sentinel がまだ見えているかもう一度判定させる
@@ -483,7 +508,9 @@ function renderCharacterList() {
     state.characterLoadedCount = Math.max(state.characterLoadedCount, Math.ceil((returnIndex + 1) / CHARACTER_PAGE_SIZE) * CHARACTER_PAGE_SIZE);
   }
   state.characterLoadedCount = Math.max(CHARACTER_PAGE_SIZE, state.characterLoadedCount || 0);
-  const cards = items.slice(0, state.characterLoadedCount).map(characterCardHtml).join('');
+  const cards = items.slice(0, state.characterLoadedCount)
+    .map((c, index) => characterCardHtml(c, { eager: index < returnIndex }))
+    .join('');
   const characterListControls = showList && items.length
     ? `<div class="character-list-toolbar">
         <label for="character-layout">画像表示</label>
@@ -504,7 +531,8 @@ function renderCharacterList() {
   const loadMore = `<div class="character-load-more">
       <div class="character-load-sentinel" aria-hidden="true"></div>
       <button type="button" id="character-load-more"></button>
-    </div>`;
+    </div>
+    <p class="character-load-status visually-hidden" role="status" aria-live="polite"></p>`;
   app.innerHTML = `
     ${renderPageNav('home')}
     <h2>キャラを選ぶ</h2>
@@ -523,6 +551,7 @@ function renderCharacterList() {
       loadMore: app.querySelector('.character-load-more'),
       sentinel: app.querySelector('.character-load-sentinel'),
       button: app.querySelector('#character-load-more'),
+      status: app.querySelector('.character-load-status'),
     };
     if (!grid.matches('.is-cover, .is-contain')) {
       characterMasonry = setupCharacterMasonry(grid);
