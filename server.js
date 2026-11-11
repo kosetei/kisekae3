@@ -4,8 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { checkComfyuiHttp, checkServerStatus, comfyuiTarget, generateImage, isMockGenerator, sendWakeOnLan, getDefaultPrompt, getDefaultSeed } from './lib/generator.js';
 import { estimateSleep, noteGenerationFinished } from './lib/sleep-estimate.js';
+import { checkComfyuiHttp, checkServerStatus, comfyuiTarget, generateImage, isMockGenerator, sendWakeOnLan, getDefaultPrompt, getDefaultSeed } from './lib/generator.js';
 import { ensureAndWait, ensureStatus, extendKeepAwake, isEnsureInProgress, launcherConfig, startEnsure } from './lib/comfyui-launcher.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
