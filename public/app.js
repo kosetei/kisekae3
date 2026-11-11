@@ -2471,7 +2471,7 @@ function renderSleepEstimate() {
   const el = sleepEstimateElement();
   const remainingSec = Math.round((sleepEstimateAt - Date.now()) / 1000);
   el.innerHTML = remainingSec > 0
-    ? `<span aria-hidden="true">💤</span><span class="sleep-estimate-label">スリープまで</span>${formatSleepRemaining(remainingSec)}`
+    ? `<span aria-hidden="true">💤</span><span class="sleep-estimate-label">スリープまで</span>最大${formatSleepRemaining(remainingSec)}`
     : '<span aria-hidden="true">💤</span>まもなくスリープ';
   if (remainingSec <= 0) {
     clearInterval(sleepEstimateTimer);
@@ -2498,7 +2498,11 @@ function updateSleepEstimate(status) {
   sleepEstimateAt = Date.now() + estimate.remainingSec * 1000;
   const basis = SLEEP_ESTIMATE_BASIS_LABELS[estimate.basis] || '最後の活動';
   const lastActivity = new Date(estimate.lastActivityAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
-  el.title = `推定: ${basis}（${lastActivity}）から数えた目安です。PC を直接操作していればもっと遅くなります`;
+  const earliestSec = estimate.earliestRemainingSec ?? estimate.remainingSec;
+  const earliest = earliestSec > 0
+    ? `早ければ ${new Date(Date.now() + earliestSec * 1000).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })} ごろ（スリープ防止の保持が切れたとき）に眠ることがあります`
+    : 'スリープ防止の保持はもう切れているので、それより早く眠ることもあります';
+  el.title = `推定: ${basis}（${lastActivity}）から数えた最大の目安です。PC を操作していなければ、${earliest}。PC を直接操作していればもっと遅くなります`;
   renderSleepEstimate();
   if (sleepEstimateAt > Date.now()) sleepEstimateTimer = setInterval(renderSleepEstimate, 30000);
 }
