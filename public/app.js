@@ -59,6 +59,8 @@ const state = {
   stageCharacter: null,
   stageDisplayedSrc: null,
   stageTransitionSrc: null,
+  stageTransitionMs: null,
+  scrollSelectedDressIntoView: false,
   busy: false,
   uploading: false,
   prompt: '',
@@ -295,6 +297,22 @@ function effectiveDressFilter() {
 
 function generatedVersions(char, dressId) {
   return char.generated[dressId] || [];
+}
+
+function scopedDressesForCharacter() {
+  const dressFolders = groupedCatalogItems(state.catalog.clothes, state.catalog.groups.clothes);
+  // 全フォルダモードはフォルダをまたぎ、フォルダ順のまま全服を並べる
+  const scopedDresses = state.dressFolderAll
+    ? dressFolders.flatMap(([, items]) => items)
+    : dressFolders.find(([group]) => group === state.dressFolder)?.[1] || [];
+  return { dressFolders, scopedDresses };
+}
+
+function generatedDressesInScope(char, scopedDresses) {
+  return OutfitSwipe.swipeableGeneratedDresses(
+    scopedDresses,
+    (dress) => generatedVersions(char, dress.id).length > 0,
+  );
 }
 
 function selectedDressVariant(dressId) {
@@ -1119,11 +1137,7 @@ function renderCharacterView() {
     state.stageTransitionSrc = null;
   }
   const missing = state.catalog.clothes.filter((d) => !generatedVersions(char, d.id).length);
-  const dressFolders = groupedCatalogItems(state.catalog.clothes, state.catalog.groups.clothes);
-  // 全フォルダモードはフォルダをまたぎ、フォルダ順のまま全服を並べる
-  const scopedDresses = state.dressFolderAll
-    ? dressFolders.flatMap(([, items]) => items)
-    : dressFolders.find(([group]) => group === state.dressFolder)?.[1] || [];
+  const { dressFolders, scopedDresses } = scopedDressesForCharacter();
   const dressFilter = effectiveDressFilter();
   const generation = generationAvailability();
   const dressMatchesFilter = (dress) => {
@@ -1177,7 +1191,7 @@ function renderCharacterView() {
     <div class="character-layout">
       <section class="stage">
         <div id="stage" class="stage-image ${state.busy ? 'busy' : ''}">
-          ${stageSrc ? `<img src="${stageSrc}" alt="${esc(char.name)}${sel ? ` — ${esc(selectedDressName)}` : ''}" />` : '<p class="empty">画像がありません</p>'}
+          ${stageSrc ? `<img src="${stageSrc}" alt="${esc(char.name)}${sel ? ` — ${esc(selectedDressName)}` : ''}" draggable="false" />` : '<p class="empty">画像がありません</p>'}
           ${state.busy ? '<div class="spinner">生成中…</div>' : ''}
         </div>
       </section>
@@ -1373,9 +1387,24 @@ function renderCharacterView() {
 
   const dressGrid = app.querySelector('.dress-grid');
   if (dressGrid) dressGrid.scrollLeft = dressScrollLeft;
+  if (state.scrollSelectedDressIntoView) {
+    state.scrollSelectedDressIntoView = false;
+    const selectedDressCard = dressGrid?.querySelector('button.dress.selected');
+    if (dressGrid && selectedDressCard) {
+      // ページ全体は動かさず、服グリッドの横スクロールだけ中央に寄せる
+      const gridRect = dressGrid.getBoundingClientRect();
+      const cardRect = selectedDressCard.getBoundingClientRect();
+      dressGrid.scrollLeft += ((cardRect.left + cardRect.right) - (gridRect.left + gridRect.right)) / 2;
+    }
+  }
 
+  updateStageOutfitNav(char, sel);
+
+  const browseTransitionMs = state.stageTransitionMs;
+  state.stageTransitionMs = null;
   if (displaySrc && displaySrc !== stageSrc) {
-    transitionStageImage(displaySrc, `${char.name}${sel ? ` — ${selectedDressName}` : ''}`);
+    const options = browseTransitionMs != null ? { durationMs: browseTransitionMs } : {};
+    transitionStageImage(displaySrc, `${char.name}${sel ? ` — ${selectedDressName}` : ''}`, options);
   } else if (state.stageTransitionSrc && state.stageTransitionSrc !== displaySrc) {
     state.stageImageRequest += 1;
     state.stageTransitionSrc = null;
@@ -1548,7 +1577,7 @@ async function renameCatalogGroup(event) {
 // actions
 // ---------------------------------------------------------------------------
 
-function transitionStageImage(src, alt) {
+function transitionStageImage(src, alt, options = {}) {
   if (state.stageTransitionSrc === src) return;
   const request = ++state.stageImageRequest;
   state.stageTransitionSrc = src;
@@ -1562,13 +1591,18 @@ function transitionStageImage(src, alt) {
     const next = document.createElement('img');
     next.src = src;
     next.alt = alt;
+    next.draggable = false;
     next.className = 'stage-image-overlay';
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const durationMs = reduceMotion ? 0 : (options.durationMs ?? 1000);
+    next.style.transitionDuration = `${durationMs}ms`;
     const finishTransition = () => {
       if (request !== state.stageImageRequest || state.stageTransitionSrc !== src) return;
       stage.querySelectorAll('img').forEach((image) => {
-        if (image !== next) image.remove();
+        if (image !== next && !image.closest('.stage-outfit-nav')) image.remove();
       });
       next.classList.remove('stage-image-overlay');
+      next.style.transitionDuration = '';
       state.stageDisplayedSrc = src;
       state.stageTransitionSrc = null;
     };
@@ -1582,7 +1616,7 @@ function transitionStageImage(src, alt) {
         if (request === state.stageImageRequest) next.classList.add('stage-image-visible');
       });
     });
-    window.setTimeout(finishTransition, 1100);
+    window.setTimeout(finishTransition, durationMs + 100);
   };
   preload.onerror = () => {
     if (request === state.stageImageRequest) {
@@ -1593,15 +1627,115 @@ function transitionStageImage(src, alt) {
   preload.src = src;
 }
 
-async function selectDress(dressId) {
+
+const STAGE_BROWSE_TRANSITION_MS = 280;
+let stageOutfitSwipeBound = null;
+let stageOutfitTracker = null;
+
+function preloadGeneratedNeighbors(char, list, currentId) {
+  const index = list.findIndex((dress) => dress.id === currentId);
+  const neighbors = index >= 0
+    ? [list[index - 1], list[index + 1]]
+    : [list[0], list[list.length - 1]];
+  for (const dress of neighbors) {
+    if (!dress) continue;
+    const version = selectedVersion(char, dress.id);
+    if (!version?.url) continue;
+    const image = new Image();
+    image.src = version.url;
+  }
+}
+
+function bindStageOutfitSwipe(stage) {
+  if (!stage || stageOutfitSwipeBound === stage) return;
+  stageOutfitTracker?.reset();
+  stageOutfitTracker = OutfitSwipe.createSwipeTracker({
+    onSwipe: (delta) => { showAdjacentGeneratedDress(delta); },
+  });
+  stage.addEventListener('pointerdown', (event) => {
+    if (event.target.closest('button, a, input, select, textarea, .stage-outfit-nav')) return;
+    if (state.busy) return;
+    stageOutfitTracker.pointerdown(event);
+    if (typeof stage.setPointerCapture === 'function' && event.pointerId != null) {
+      try { stage.setPointerCapture(event.pointerId); } catch {
+        // キャプチャできない環境でもポインタが要素内にあれば pointerup は届く
+      }
+    }
+  });
+  stage.addEventListener('pointermove', (event) => {
+    const result = stageOutfitTracker?.pointermove(event);
+    if (result?.prevent) event.preventDefault();
+  }, { passive: false });
+  stage.addEventListener('pointerup', (event) => {
+    stageOutfitTracker?.pointerup(event);
+  });
+  stage.addEventListener('pointercancel', (event) => {
+    stageOutfitTracker?.pointercancel(event);
+  });
+  stageOutfitSwipeBound = stage;
+}
+
+function updateStageOutfitNav(char, selectedDressId) {
+  const stage = document.getElementById('stage');
+  if (!stage) return;
+  bindStageOutfitSwipe(stage);
+  const { scopedDresses } = scopedDressesForCharacter();
+  const list = generatedDressesInScope(char, scopedDresses);
+  let nav = stage.querySelector('.stage-outfit-nav');
+  if (!list.length) {
+    nav?.remove();
+    return;
+  }
+  if (!nav) {
+    nav = document.createElement('div');
+    nav.className = 'stage-outfit-nav';
+    nav.innerHTML = `
+      <button type="button" class="stage-outfit-prev" aria-label="前の生成済みの服">‹</button>
+      <span class="stage-outfit-position" aria-live="polite"></span>
+      <button type="button" class="stage-outfit-next" aria-label="次の生成済みの服">›</button>`;
+    nav.querySelector('.stage-outfit-prev').addEventListener('click', () => {
+      showAdjacentGeneratedDress(-1);
+    });
+    nav.querySelector('.stage-outfit-next').addEventListener('click', () => {
+      showAdjacentGeneratedDress(1);
+    });
+    stage.append(nav);
+  }
+  const canBrowse = list.length > 1 && !state.busy;
+  nav.querySelector('.stage-outfit-prev').hidden = list.length <= 1;
+  nav.querySelector('.stage-outfit-next').hidden = list.length <= 1;
+  nav.querySelector('.stage-outfit-prev').disabled = !canBrowse;
+  nav.querySelector('.stage-outfit-next').disabled = !canBrowse;
+  nav.querySelector('.stage-outfit-position').textContent = OutfitSwipe.positionLabel(list, selectedDressId);
+  preloadGeneratedNeighbors(char, list, selectedDressId);
+}
+
+async function showAdjacentGeneratedDress(delta) {
+  if (state.busy || !state.currentCharacter) return;
+  const char = findCharacter(state.currentCharacter);
+  if (!char) return;
+  const { scopedDresses } = scopedDressesForCharacter();
+  const list = generatedDressesInScope(char, scopedDresses);
+  const nextIndex = OutfitSwipe.adjacentGeneratedIndex(list, scopedDresses, state.selectedDress, delta);
+  if (nextIndex < 0) return;
+  const next = list[nextIndex];
+  if (!next || next.id === state.selectedDress) return;
+  state.stageTransitionMs = STAGE_BROWSE_TRANSITION_MS;
+  state.scrollSelectedDressIntoView = true;
+  await selectDress(next.id, { browse: true });
+}
+
+async function selectDress(dressId, options = {}) {
+  const browse = options.browse === true;
   if (dressId === state.selectedDress) {
+    if (browse) return;
     const char = findCharacter(state.currentCharacter);
     if (!generatedVersions(char, dressId).length) {
       await generate(char, dressId, false, null, selectedDressVariant(dressId));
     }
     return;
   }
-  if (!await confirmPromptSaveBeforeLeaving()) {
+  if (!browse && !await confirmPromptSaveBeforeLeaving()) {
     renderCharacterView();
     return;
   }
@@ -2563,6 +2697,16 @@ function updateSleepEstimate(status) {
 }
 
 refreshServerStatus();
+
+window.addEventListener('keydown', (event) => {
+  if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.repeat) return;
+  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+  if (!state.currentCharacter || state.busy) return;
+  if (OutfitSwipe.isTypingTarget(event.target)) return;
+  if (document.querySelector('dialog[open]')) return;
+  event.preventDefault();
+  showAdjacentGeneratedDress(event.key === 'ArrowRight' ? 1 : -1);
+});
 
 window.addEventListener('hashchange', async () => {
   if (!await confirmPromptSaveBeforeLeaving()) {
