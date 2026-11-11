@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { checkServerStatus, generateImage, sendWakeOnLan, getDefaultPrompt, getDefaultSeed } from './lib/generator.js';
+import { checkComfyuiHttp, checkServerStatus, comfyuiTarget, generateImage, isMockGenerator, sendWakeOnLan, getDefaultPrompt, getDefaultSeed } from './lib/generator.js';
+import { ensureAndWait, ensureStatus, extendKeepAwake, isEnsureInProgress, launcherConfig, startEnsure } from './lib/comfyui-launcher.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(ROOT, 'public');
@@ -710,6 +711,20 @@ async function handleGenerate(res, body) {
     });
   }
 
+  if (!isMockGenerator()) {
+    const launcher = launcherConfig();
+    // AUTO_START=1 のときだけ、ComfyUI が止まっていれば起動してから生成する（既定は UI の確認ダイアログ経由）
+    if (launcher.enabled && (launcher.autoStart || isEnsureInProgress()) && !(await checkComfyuiHttp(comfyuiTarget().base))) {
+      if (!launcher.autoStart) {
+        return json(res, 503, { error: 'ComfyUI 起動中です。起動が終わってから生成してください', ensure: ensureStatus() });
+      }
+      const ensured = await ensureAndWait();
+      if (ensured.phase !== 'ready' && ensured.phase !== 'already_running') {
+        return json(res, 503, { error: `ComfyUI を起動できませんでした: ${ensured.message}`, ensure: ensured });
+      }
+    }
+  }
+
   const actualSeed = seed ?? getDefaultSeed();
   fs.mkdirSync(generatedDir, { recursive: true });
   const result = await generateImage({
@@ -1113,7 +1128,33 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { prompt: getDefaultPrompt(), seed: getDefaultSeed() });
     }
     if (pathname === '/api/server-status' && req.method === 'GET') {
-      return json(res, 200, await checkServerStatus());
+      const ensure = ensureStatus();
+      return json(res, 200, {
+        ...await checkServerStatus(),
+        // ComfyUI のオンデマンド起動（COMFYUI_START_TASK）が使えるか、起動処理中か
+        startAvailable: ensure.enabled,
+        autoStart: ensure.autoStart,
+        keepAwakeAvailable: ensure.keepAwakeAvailable,
+        starting: ensure.inProgress,
+        ensure,
+      });
+    }
+    if (pathname === '/api/comfyui/ensure' && req.method === 'GET') {
+      return json(res, 200, ensureStatus());
+    }
+    if (pathname === '/api/comfyui/ensure' && req.method === 'POST') {
+      const body = await readBody(req);
+      // 受け付けるのは VRAM ガードを無視する force だけ。タスク名やコマンドは受け取らない
+      if (!body || typeof body !== 'object' || Array.isArray(body)
+        || Object.keys(body).some((key) => key !== 'force')
+        || (body.force !== undefined && typeof body.force !== 'boolean')) {
+        return json(res, 400, { error: 'body は {"force": boolean} だけ指定できます' });
+      }
+      return json(res, 202, startEnsure({ force: body.force === true, explicit: true }));
+    }
+    if (pathname === '/api/comfyui/keep-awake' && req.method === 'POST') {
+      // 「スリープ延長」。リクエストからは何も受け取らず、COMFYUI_KEEP_AWAKE_TASK だけを実行する（start_comfy は送らない）
+      return json(res, 200, await extendKeepAwake());
     }
     if (pathname === '/api/wake' && req.method === 'POST') {
       return json(res, 200, await sendWakeOnLan());
