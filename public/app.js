@@ -2635,6 +2635,7 @@ const SLEEP_ESTIMATE_BASIS_LABELS = {
 };
 let sleepEstimateTimer = 0;
 let sleepEstimateAt = 0;
+let sleepEstimateIsMax = true;
 
 function sleepEstimateElement() {
   let el = document.getElementById('sleep-estimate');
@@ -2660,7 +2661,7 @@ function renderSleepEstimate() {
   const el = sleepEstimateElement();
   const remainingSec = Math.round((sleepEstimateAt - Date.now()) / 1000);
   el.innerHTML = remainingSec > 0
-    ? `<span aria-hidden="true">💤</span><span class="sleep-estimate-label">スリープまで</span>最大${formatSleepRemaining(remainingSec)}`
+    ? `<span aria-hidden="true">💤</span><span class="sleep-estimate-label">スリープまで</span>${sleepEstimateIsMax ? '最大' : ''}${formatSleepRemaining(remainingSec)}`
     : '<span aria-hidden="true">💤</span>まもなくスリープ';
   if (remainingSec <= 0) {
     clearInterval(sleepEstimateTimer);
@@ -2673,16 +2674,43 @@ function updateSleepEstimate(status) {
   sleepEstimateTimer = 0;
   const el = sleepEstimateElement();
   const estimate = status?.sleepEstimate;
+  const pc = status?.pcSleep;
+  // 生成中は、実測値より「スリープしない」を優先する
+  if (estimate?.busy) {
+    el.hidden = false;
+    el.innerHTML = '<span aria-hidden="true">💤</span>生成中はスリープしません';
+    el.title = 'ComfyUI が生成中なので、スリープ防止タスクが動いていればスリープしません（推定）';
+    return;
+  }
+  if (pc?.available && pc.sleepDisabled) {
+    el.hidden = false;
+    el.innerHTML = '<span aria-hidden="true">💤</span>スリープは無効';
+    el.title = 'Windows のスリープ タイムアウトが 0（無効）です';
+    return;
+  }
+  // PC から実際のアイドル時間と keep_awake の保持期限が取れたときは、それを表示する
+  if (pc?.available && pc.loggedOn !== false && Number.isFinite(pc.remainingSec)) {
+    el.hidden = false;
+    sleepEstimateIsMax = false;
+    sleepEstimateAt = Date.now() + pc.remainingSec * 1000;
+    const bits = [];
+    if (pc.idleMinutes !== null && pc.idleMinutes !== undefined) bits.push(`最終入力から約${pc.idleMinutes}分`);
+    if (pc.timeoutMinutes !== null && pc.timeoutMinutes !== undefined) bits.push(`設定${pc.timeoutMinutes}分`);
+    if (pc.holdActive && pc.holdUntil) {
+      bits.push(`スリープ防止は${new Date(pc.holdUntil).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}まで`);
+    }
+    el.title = `スリープまでの目安（実測）: ${bits.join(' / ')}。PC を直接操作すると延びます。他のアプリがスリープを止めているともっと遅くなります`;
+    renderSleepEstimate();
+    if (sleepEstimateAt > Date.now()) sleepEstimateTimer = setInterval(renderSleepEstimate, 30000);
+    return;
+  }
+  // 取れないときは、これまでの ComfyUI 履歴からの推定にフォールバックする
+  sleepEstimateIsMax = true;
   if (!estimate || (!estimate.busy && !estimate.sleepAt)) {
     el.hidden = true;
     return;
   }
   el.hidden = false;
-  if (estimate.busy) {
-    el.innerHTML = '<span aria-hidden="true">💤</span>生成中はスリープしません';
-    el.title = 'ComfyUI が生成中なので、スリープ防止タスクが動いていればスリープしません（推定）';
-    return;
-  }
   // サーバーとの時計のずれを避けるため、残り秒数から自分の時計の時刻に直す
   sleepEstimateAt = Date.now() + estimate.remainingSec * 1000;
   const basis = SLEEP_ESTIMATE_BASIS_LABELS[estimate.basis] || '最後の活動';

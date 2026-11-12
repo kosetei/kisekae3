@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { estimateSleep, noteGenerationFinished } from './lib/sleep-estimate.js';
 import { checkComfyuiHttp, checkServerStatus, comfyuiTarget, generateImage, isMockGenerator, sendWakeOnLan, getDefaultPrompt, getDefaultSeed } from './lib/generator.js';
 import { ensureAndWait, ensureStatus, isEnsureInProgress, launcherConfig, startEnsure } from './lib/comfyui-launcher.js';
+import { extendPcSleep, readPcSleep } from './lib/pc-power.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(ROOT, 'public');
@@ -1133,13 +1134,19 @@ const server = http.createServer(async (req, res) => {
       const ensure = ensureStatus();
       const serverStatus = await checkServerStatus();
       // スリープまでの推定（ComfyUI が応答しているときだけ。この確認のときだけ ComfyUI の /queue と /history を見る）
-      const sleepEstimate = await estimateSleep(comfyuiTarget().base, {
-        ...serverStatus,
-        readyAt: ensure.phase === 'ready' && ensure.finishedAt ? Date.parse(ensure.finishedAt) : 0,
-      });
+      // PC が起動しているときは、SSH で実際のアイドル時間と keep_awake の保持状態も取る。
+      // 取れないときは estimateSleep の推定にフォールバックする。
+      const [sleepEstimate, pcSleep] = await Promise.all([
+        estimateSleep(comfyuiTarget().base, {
+          ...serverStatus,
+          readyAt: ensure.phase === 'ready' && ensure.finishedAt ? Date.parse(ensure.finishedAt) : 0,
+        }),
+        serverStatus.server && !serverStatus.mock ? readPcSleep() : Promise.resolve(null),
+      ]);
       return json(res, 200, {
         ...serverStatus,
         sleepEstimate,
+        pcSleep,
         // ComfyUI のオンデマンド起動（COMFYUI_START_TASK）が使えるか、起動処理中か
         startAvailable: ensure.enabled,
         autoStart: ensure.autoStart,
@@ -1162,6 +1169,19 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname === '/api/wake' && req.method === 'POST') {
       return json(res, 200, await sendWakeOnLan());
+    }
+    if (pathname === '/api/pc-sleep' && req.method === 'GET') {
+      return json(res, 200, await readPcSleep());
+    }
+    if (pathname === '/api/pc-sleep/extend' && req.method === 'POST') {
+      const body = await readBody(req);
+      // 受け付けるのは minutes だけ。タスク名やスクリプトパスは環境変数の固定値だけを使う
+      if (!body || typeof body !== 'object' || Array.isArray(body)
+        || Object.keys(body).some((key) => key !== 'minutes')
+        || !Number.isInteger(body.minutes)) {
+        return json(res, 400, { error: 'body は {"minutes": 整数} だけ指定できます' });
+      }
+      return json(res, 200, await extendPcSleep(body.minutes));
     }
     if (pathname === '/api/prompt-settings' && req.method === 'GET') {
       return json(res, 200, readPromptSettings());
