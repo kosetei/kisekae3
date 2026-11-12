@@ -2694,7 +2694,9 @@ function updateSleepEstimate(status) {
     sleepEstimateIsMax = false;
     sleepEstimateAt = Date.now() + pc.remainingSec * 1000;
     const bits = [];
-    if (pc.idleMinutes !== null && pc.idleMinutes !== undefined) bits.push(`最終入力から約${pc.idleMinutes}分`);
+    if (pc.idleStartBasis === 'resume' && pc.idleStartMinutes != null) bits.push(`復帰から約${pc.idleStartMinutes}分`);
+    else if (pc.idleStartBasis === 'boot' && pc.idleStartMinutes != null) bits.push(`起動から約${pc.idleStartMinutes}分`);
+    else if (pc.idleMinutes !== null && pc.idleMinutes !== undefined) bits.push(`最終入力から約${pc.idleMinutes}分`);
     if (pc.timeoutMinutes !== null && pc.timeoutMinutes !== undefined) bits.push(`設定${pc.timeoutMinutes}分`);
     if (pc.holdActive && pc.holdUntil) {
       bits.push(`スリープ防止は${new Date(pc.holdUntil).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}まで`);
