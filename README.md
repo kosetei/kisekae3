@@ -167,12 +167,14 @@ schtasks /Change /TN keep_awake /TR "powershell -NoProfile -ExecutionPolicy Bypa
 4. `schtasks /Run /TN keep_awake` でスリープ防止タスクを実行する（すでに動いていれば `IgnoreNew` で何もしない）
 5. 動いている `comfy-keep-awake.ps1` が延長ファイルを読み、その時刻まで `ES_SYSTEM_REQUIRED` を保持する
 
+`{"minutes": 0}` は解除です。延長ファイルを削除して `keep_awake` を再起動し、保持をやめて Windows のスリープ設定に任せます（ComfyUI が生成中なら、その間は保持を続けます）。作業が終わったときに使います。
+
 `SetThreadExecutionState` はスレッド（セッション）に紐づくため、SSH（session 0）から直接は呼びません。必ず対話セッションで動く `keep_awake` タスク経由にしてください。PC にログオンしているユーザーがいないと、`/Run` は成功しても実際には保持されません。そのときは `loggedOn: false` としてエラーを返します。
 
 API:
 
 - `GET /api/pc-sleep` — 状態を取得する。`available`、`loggedOn`、`idleMinutes`、`timeoutMinutes`、`sleepDisabled`、`holdActive`、`holdUntil`、`sleepAt`、`remainingSec`、`basis`（`keep_awake` / `idle`）を返す
-- `POST /api/pc-sleep/extend` — `{"minutes": 30}` で延長する。`target`、`taskRun` を返す
+- `POST /api/pc-sleep/extend` — `{"minutes": 30}` で延長する。`target`、`taskRun` を返す。`{"minutes": 0}` は解除（OS のスリープ設定に任せる）
 - `GET /api/server-status` — `pcSleep` を含む（PC が応答していて、`GENERATOR=mock` でないときだけ取得する）
 
 設定:
