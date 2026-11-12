@@ -137,3 +137,57 @@ ComfyUIが起動していない、モデルが不足している、またはワ�
 
   `schtasks` ではトリガーなし（On demand）で作れないため、`/SC ONCE` で登録して `/Run` で呼び出します。`/SC ONCE` には `/ST` が必要です。今日の 00:00 のようにすでに過ぎた時刻を指定するので「開始時刻が現在時刻より前のため実行されない可能性があります」という警告が出ますが、それで正しく、トリガーでは実行されず `/Run` でだけ動きます。
 - タスク名・ユーザー・ホストは環境変数の固定値だけを使います。リクエストからは受け取らず、ssh はシェルを通さずに実行します。ただし、このアプリには認証がないため、同じ LAN 上のユーザーなら誰でも起動を要求できます。
+
+### PC のスリープ状態の取得・延長（任意）
+
+`COMFYUI_SSH_USER` と `PC_SLEEP_SCRIPT` を設定すると、PC の実際のスリープまでの残り時間を取得し、画面から延長できます。表示は「💤 スリープまで約N分」で、カーソルを合わせると最終入力・設定値・スリープ防止の期限が出ます。`pcSleep` が取れないときは、これまでの ComfyUI 履歴からの推定（「最大約N分」）に戻ります。
+
+延長は `powercfg /change` で設定を書き換えるのではなく、既存のスリープ防止タスク（`COMFYUI_KEEP_AWAKE_TASK`、既定 `keep_awake`）に `ES_SYSTEM_REQUIRED` を保持させます。設定は変えないので、延長した時間が過ぎれば元のスリープ設定に戻ります。
+
+PC 側は `C:\Users\<COMFYUI_SSH_USER>\comfy-control\` にまとめます（ユーザーフォルダ直下を汚さないため）。
+
+- `comfy-keep-awake.ps1` — スリープ防止の本体。`comfy-keep-awake.extend`（Unix 秒）が未来なら、その時刻まで保持する。状態を `comfy-keep-awake.status.json` に書く
+- `comfy-sleep.ps1` — 状態取得と延長のヘルパー。`-Status` / `-ExtendMinutes N` / `-TaskName keep_awake`。出力は 1 行の JSON
+- `comfy-keep-awake.log` / `comfy-keep-awake.lock` / `comfy-keep-awake.extend` / `comfy-keep-awake.status.json` — 実行時にこのフォルダへ作られる
+- `start_comfy.bat` — ComfyUI の起動ランチャー。既存タスクの `/TR` はユーザーフォルダ直下の薄いランチャーを指したままでもよい（そのランチャーが `comfy-control\start_comfy.bat` を `call` する）
+
+スリープ防止タスクの `/TR` は新しいパスに変更してください（`keep_awake` は `/RL LIMITED` なので、管理者でなくても変更できます）。
+
+```
+schtasks /Change /TN keep_awake /TR "powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\tatei\comfy-control\comfy-keep-awake.ps1"
+```
+
+`start_comfy` を `/RL HIGHEST` で登録している場合、`/TR` の変更には管理者権限が必要です。その場合はユーザーフォルダ直下の `start_comfy.bat` を薄いランチャーとして残し、実体を `comfy-control` に置いてください。
+
+延長の流れ:
+
+1. `POST /api/pc-sleep/extend` の `{"minutes": 60}` を受ける（0 は解除、1〜`PC_SLEEP_MAX_EXTEND_MINUTES` は延長）
+2. ssh で `comfy-sleep.ps1 -ExtendMinutes 60` を実行する
+3. ヘルパーが `comfy-keep-awake.extend` に「今 + 60 分」の Unix 秒を書く。すでに延長要求が出ていて、その時刻のほうが遅ければ、その時刻 + 60 分にする（延長しても短くはならない）
+4. `schtasks /Run /TN keep_awake` でスリープ防止タスクを実行する（すでに動いていれば `IgnoreNew` で何もしない）
+5. 動いている `comfy-keep-awake.ps1` が延長ファイルを読み、その時刻まで `ES_SYSTEM_REQUIRED` を保持する
+
+`{"minutes": 0}` は解除です。延長ファイルを削除して `keep_awake` を再起動し、保持をやめて Windows のスリープ設定に任せます（ComfyUI が生成中なら、その間は保持を続けます）。作業が終わったときに使います。
+
+`SetThreadExecutionState` はスレッド（セッション）に紐づくため、SSH（session 0）から直接は呼びません。必ず対話セッションで動く `keep_awake` タスク経由にしてください。PC にログオンしているユーザーがいないと、`/Run` は成功しても実際には保持されません。そのときは `loggedOn: false` としてエラーを返します。
+
+API:
+
+- `GET /api/pc-sleep` — 状態を取得する。`available`、`loggedOn`、`idleMinutes`、`timeoutMinutes`、`sleepDisabled`、`holdActive`、`holdUntil`、`sleepAt`、`remainingSec`、`basis`（`keep_awake` / `idle`）を返す
+- `POST /api/pc-sleep/extend` — `{"minutes": 30}` で延長する。`target`、`taskRun` を返す。`{"minutes": 0}` は解除（OS のスリープ設定に任せる）
+- `GET /api/server-status` — `pcSleep` を含む（PC が応答していて、`GENERATOR=mock` でないときだけ取得する）
+
+設定:
+
+- `PC_SLEEP_SCRIPT` — PC 側ヘルパーのパス（既定値 `C:/Users/<COMFYUI_SSH_USER>/comfy-control/comfy-sleep.ps1`）。ドライブ文字 + 英数字と `_ . / -` だけを使えます
+- `PC_SLEEP_SSH_TIMEOUT_MS` — ssh のタイムアウト（既定値 `6000`）
+- `PC_SLEEP_CACHE_MS` — 取得結果を使い回す時間（既定値 `5000`）
+- `PC_SLEEP_MAX_EXTEND_MINUTES` — 1 回に延長できる上限（既定値 `1440`）
+
+注意:
+
+- アイドル時間は `quser` の IDLE TIME（分単位）を使います。`GetLastInputInfo` は切断した RDP セッションで何日も前の値を返すことがあるため使いません。分単位なので、残り時間は最大 1 分ほどずれます
+- スリープから復帰した直後は、`quser` の IDLE TIME が復帰前のまま（何十分も操作していない扱い）になります。実際のアイドルタイマーは復帰から数え直されるため、Kernel-Power のイベント 107（復帰）と起動時刻のうち新しいほうをアイドルの起点にしています。このとき `idleStartBasis` は `resume` または `boot` になります
+- `timeoutMinutes` は電源設定の AC のスリープ タイムアウト（`powercfg /query` の `STANDBYIDLE`）です。休止（`HIBERNATEIDLE`）は別です
+- スリープまでの表示は、最後の入力（スリープから復帰した直後は復帰時刻）+ `timeoutMinutes` と、スリープ防止の期限のうち遅いほうです。他のアプリがスリープを止めていれば、さらに遅くなります
+- このアプリには認証がないため、同じ LAN 上のユーザーなら誰でも延長できます（最大 1 日）。必要なら LAN の外に出さないでください
