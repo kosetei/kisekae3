@@ -161,7 +161,7 @@ schtasks /Change /TN keep_awake /TR "powershell -NoProfile -ExecutionPolicy Bypa
 
 延長の流れ:
 
-1. `POST /api/pc-sleep/extend` の `{"minutes": 60}` を受ける（1〜`PC_SLEEP_MAX_EXTEND_MINUTES`）
+1. `POST /api/pc-sleep/extend` の `{"minutes": 60}` を受ける（0 は解除、1〜`PC_SLEEP_MAX_EXTEND_MINUTES` は延長）
 2. ssh で `comfy-sleep.ps1 -ExtendMinutes 60` を実行する
 3. ヘルパーが `comfy-keep-awake.extend` に「今 + 60 分」の Unix 秒を書く。すでに延長要求が出ていて、その時刻のほうが遅ければ、その時刻 + 60 分にする（延長しても短くはならない）
 4. `schtasks /Run /TN keep_awake` でスリープ防止タスクを実行する（すでに動いていれば `IgnoreNew` で何もしない）
