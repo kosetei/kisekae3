@@ -1117,9 +1117,13 @@ function renderCharacterView() {
   const existingLayout = state.stageCharacter === char.id
     ? app.querySelector('.character-layout')
     : null;
-  const dressScrollLeft = app.dataset.character === char.id
-    ? app.querySelector('.dress-grid')?.scrollLeft || 0
-    : 0;
+  const sameCharacterPage = app.dataset.character === char.id;
+  const existingDresses = sameCharacterPage ? app.querySelector('.dresses') : null;
+  const dressScrollLeft = existingDresses?.querySelector('.dress-grid')?.scrollLeft || 0;
+  const dressesScrollTop = existingDresses?.scrollTop || 0;
+  const pageScroll = sameCharacterPage
+    ? { x: window.scrollX, y: window.scrollY }
+    : null;
   app.dataset.character = char.id;
 
   const sel = state.selectedDress;
@@ -1386,7 +1390,10 @@ function renderCharacterView() {
   }
 
   const dressGrid = app.querySelector('.dress-grid');
+  const dresses = app.querySelector('.dresses');
   if (dressGrid) dressGrid.scrollLeft = dressScrollLeft;
+  if (dresses) dresses.scrollTop = dressesScrollTop;
+  if (pageScroll) window.scrollTo(pageScroll.x, pageScroll.y);
   if (state.scrollSelectedDressIntoView) {
     state.scrollSelectedDressIntoView = false;
     const selectedDressCard = dressGrid?.querySelector('button.dress.selected');
@@ -1396,6 +1403,17 @@ function renderCharacterView() {
       const cardRect = selectedDressCard.getBoundingClientRect();
       dressGrid.scrollLeft += ((cardRect.left + cardRect.right) - (gridRect.left + gridRect.right)) / 2;
     }
+    // 横長レイアウトでは .dresses が縦スクロールするので、はみ出した分だけ動かす
+    if (dresses && selectedDressCard) {
+      const containerRect = dresses.getBoundingClientRect();
+      const cardRect = selectedDressCard.getBoundingClientRect();
+      if (cardRect.top < containerRect.top) {
+        dresses.scrollTop += cardRect.top - containerRect.top;
+      } else if (cardRect.bottom > containerRect.bottom) {
+        dresses.scrollTop += cardRect.bottom - containerRect.bottom;
+      }
+    }
+    if (pageScroll) window.scrollTo(pageScroll.x, pageScroll.y);
   }
 
   updateStageOutfitNav(char, sel);
